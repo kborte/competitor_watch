@@ -104,3 +104,9 @@ def get_snapshot(finding_id: int):
 def list_companies():
     with db.connect() as conn:
         return reads.list_companies(conn)
+
+
+@app.get("/crawl-status")
+def get_crawl_status():
+    with db.connect() as conn:
+        return {"latest_crawl_at": reads.get_latest_crawl_at(conn)}

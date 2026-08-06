@@ -143,6 +143,12 @@ def inject_base_href(html: str, base_url: str) -> str:
     return html[:insert_at] + base_tag + html[insert_at:]
 
 
+def get_latest_crawl_at(conn) -> datetime | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(retrieved_at) FROM findings")
+        return cur.fetchone()[0]
+
+
 def list_companies(conn) -> list[dict]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
