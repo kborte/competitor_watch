@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+backend/.env
+research_crawler/.env
