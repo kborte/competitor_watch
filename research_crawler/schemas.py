@@ -7,7 +7,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-Category = Literal["product", "marketing", "news", "social_sentiment", "regulatory", "other"]
+Category = Literal[
+    "product", "marketing", "news", "social_sentiment", "regulatory",
+    "investment_or_acquisition", "financial_results", "other",
+]
 
 
 class Finding(BaseModel):
@@ -22,6 +25,11 @@ class Finding(BaseModel):
     published_at: Optional[date] = None
     retrieved_at: datetime
     source_html: Optional[str] = None
+    og_title: Optional[str] = None
+    og_image_url: Optional[str] = None
+    og_description: Optional[str] = None
+    og_site_name: Optional[str] = None
+    verified: bool = True
 
 
 class FindingsBatch(BaseModel):

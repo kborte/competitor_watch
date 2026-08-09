@@ -5,6 +5,7 @@ grounding cites — and structure.py turns that into clean Finding objects
 in a second call."""
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from google import genai
 from google.genai import types
@@ -29,16 +30,34 @@ class ResolvedSource:
     resolved_url: str
     clean_text: str | None  # None if the independent fetch failed
     raw_html: str | None  # None if the fetch failed, wasn't HTML, or exceeded the size cap
+    og_title: str | None = None
+    og_image_url: str | None = None
+    og_description: str | None = None
+    og_site_name: str | None = None
+    published_date: str | None = None
 
 
-def discover(keyword: str) -> tuple[str, list[ResolvedSource]]:
-    """Returns (free_text_summary, resolved_sources)."""
-    print(f"  [{keyword}] calling Gemini with search grounding...", flush=True)
+def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, list[ResolvedSource]]:
+    """Returns (free_text_summary, resolved_sources). time_range_days, when
+    set, scopes the grounded search to only the last N days via Gemini's
+    native time_range_filter — reduces how often an old article the
+    crawler only just discovered gets treated as fresh. (The other half of
+    that fix is the read API's published_at-based freshness filtering,
+    which catches whatever still slips through.)"""
+    search_kwargs = {}
+    if time_range_days is not None:
+        now = datetime.now(timezone.utc)
+        search_kwargs["time_range_filter"] = types.Interval(
+            start_time=now - timedelta(days=time_range_days), end_time=now,
+        )
+
+    window_note = f" (window: last {time_range_days}d)" if time_range_days else ""
+    print(f"  [{keyword}] calling Gemini with search grounding...{window_note}", flush=True)
     response = client.models.generate_content(
         model=config.MODEL,
         contents=PROMPT_TEMPLATE.format(keyword=keyword),
         config=types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
+            tools=[types.Tool(google_search=types.GoogleSearch(**search_kwargs))],
         ),
     )
     summary_text = response.text or ""
@@ -54,13 +73,29 @@ def discover(keyword: str) -> tuple[str, list[ResolvedSource]]:
             continue
         result = fetch_page(chunk.web.uri)
         if result is None:
-            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): fetch FAILED", flush=True)
-            resolved.append(ResolvedSource(chunk.web.title or "", chunk.web.uri, None, None))
+            # Truly unresolvable (DNS/timeout/connection error) — no real
+            # URL exists to show a human, so this source is dropped
+            # entirely rather than ever citing Gemini's raw grounding
+            # redirect link (vertexaisearch.cloud.google.com/...) as a
+            # "source."
+            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
+                  f"could not be resolved at all — dropped, not citable", flush=True)
+            continue
+
+        if result.clean_text is None:
+            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
+                  f"resolved to {result.final_url} but content fetch failed — "
+                  f"citable, unverified", flush=True)
         else:
             print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
                   f"fetched {len(result.clean_text)} chars from {result.final_url}", flush=True)
-            resolved.append(ResolvedSource(
-                chunk.web.title or "", result.final_url, result.clean_text, result.raw_html,
-            ))
+
+        resolved.append(ResolvedSource(
+            domain_title=chunk.web.title or "", resolved_url=result.final_url,
+            clean_text=result.clean_text, raw_html=result.raw_html,
+            og_title=result.og_title, og_image_url=result.og_image_url,
+            og_description=result.og_description, og_site_name=result.og_site_name,
+            published_date=result.published_date,
+        ))
 
     return summary_text, resolved

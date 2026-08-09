@@ -36,7 +36,7 @@ from .structure import structure
 PER_COMPANY_TIMEOUT_SECONDS = 5 * 60
 
 
-def _run_company(keyword: str):
+def _run_company(keyword: str, time_range_days: int | None):
     """Runs discover+structure for one keyword on a daemon thread and
     returns ("ok", (summary, sources, batch)) / ("error", exc) / ("timeout", None).
 
@@ -47,7 +47,7 @@ def _run_company(keyword: str):
 
     def worker():
         try:
-            summary, sources = discover(keyword)
+            summary, sources = discover(keyword, time_range_days=time_range_days)
             batch = structure(keyword, summary, sources)
             result.put(("ok", (summary, sources, batch)))
         except Exception as exc:
@@ -98,11 +98,12 @@ def run() -> None:
     delivered = failed = 0
 
     print(f"crawl {crawl_id} starting — {total} keywords, "
-          f"{PER_COMPANY_TIMEOUT_SECONDS}s budget per company", flush=True)
+          f"{PER_COMPANY_TIMEOUT_SECONDS}s budget per company, "
+          f"search window: last {config.SEARCH_WINDOW_DAYS}d", flush=True)
 
     for i, keyword in enumerate(config.KEYWORDS, 1):
         print(f"\n[{i}/{total}] {keyword}", flush=True)
-        status, payload = _run_company(keyword)
+        status, payload = _run_company(keyword, config.SEARCH_WINDOW_DAYS)
 
         if status == "timeout":
             print(f"  [{keyword}] TIMEOUT — exceeded {PER_COMPANY_TIMEOUT_SECONDS}s budget, abandoning", flush=True)

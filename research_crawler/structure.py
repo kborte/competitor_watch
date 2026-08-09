@@ -4,7 +4,7 @@ is to read what discover.py already found and shape it correctly. It's
 told to quote source_excerpt verbatim from the fetched page text, not
 paraphrase, so grounding survives into the actual stored record."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from google import genai
 from google.genai import types
@@ -19,15 +19,30 @@ PROMPT_TEMPLATE = """Below is a research summary about "{keyword}" plus the actu
 text of each source it cited. Turn this into a list of distinct findings.
 
 For each finding:
-- category: exactly one of product, marketing, news, social_sentiment, regulatory, other — a \
-factual bucket, not a judgment about importance.
-- company: normalized name (e.g. "Bupa Arabia", not "bupa").
+- category: exactly one of these factual buckets (not a judgment about importance):
+  - product: a change to what's actually offered — new coverage, features, pricing structure.
+  - marketing: campaigns, promotions, sponsorships, brand pushes.
+  - news: general press coverage not covered by a more specific bucket below.
+  - social_sentiment: reviews, social media, forum mentions.
+  - regulatory: compliance, licensing, conduct frameworks, disclosure requirements — a \
+regulator being involved is not sufficient on its own; the finding must be *about* compliance/ \
+licensing itself, not merely announced through a regulatory process.
+  - investment_or_acquisition: M&A, stake changes, funding rounds, new subsidiary formation.
+  - financial_results: earnings, profit/loss, dividends, capital raises — even when a regulator \
+had to approve the raise itself, the story is financial, not regulatory.
+  - other: doesn't fit any of the above.
+- company: normalized name (e.g. "Bupa Arabia", not "bupa"). For a company-specific search \
+this is overridden afterwards to the company actually being searched for regardless of what \
+you put here — so focus your judgment on genuinely market-wide research, where this should \
+name whichever specific company (if any) a finding is really about.
 - platform: e.g. "Google Play", "X", "Trustpilot" — or omit for ordinary news/press pages.
 - source_url: must be exactly one of the source URLs listed below.
 - source_excerpt: a VERBATIM substring copied from that source's fetched text below — not a \
-paraphrase. If a claim's source has no fetched text (fetch failed), you may summarize instead \
-and note in the excerpt that the page couldn't be independently verified.
-- published_at: YYYY-MM-DD if it's mentioned anywhere in the source text, else omit.
+paraphrase. If a claim's source has no fetched text (fetch failed), summarize the claim from \
+the research summary instead — no need to caveat this in the text, that's tracked separately.
+- published_at: YYYY-MM-DD if it's mentioned anywhere in the source text, else omit. (Used only \
+as a fallback — a page's real publish-date metadata is extracted separately and takes priority \
+over this guess when available.)
 
 Report everything relevant, including routine items — do not filter for importance.
 
@@ -60,11 +75,33 @@ def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> Find
     )
     batch = response.parsed
     now = datetime.now(timezone.utc)
-    html_by_url = {s.resolved_url: s.raw_html for s in sources}
+    sources_by_url = {s.resolved_url: s for s in sources}
     for finding in batch.findings:
         finding.keyword = keyword
         finding.retrieved_at = now
-        finding.source_html = html_by_url.get(finding.source_url)
+        # We already know definitively which competitor a named-keyword
+        # search was for — no need to trust the LLM's independent guess,
+        # which has mistagged findings to some other company merely
+        # mentioned in the article (e.g. a partner bank) instead of the
+        # one actually being tracked.
+        if keyword != config.MARKET_WIDE_KEYWORD:
+            finding.company = keyword
+        source = sources_by_url.get(finding.source_url)
+        finding.source_html = source.raw_html if source else None
+        finding.og_title = source.og_title if source else None
+        finding.og_image_url = source.og_image_url if source else None
+        finding.og_description = source.og_description if source else None
+        finding.og_site_name = source.og_site_name if source else None
+        # Deterministic, never inferred from LLM prose — true iff we
+        # actually got the source's own text, not just a resolved URL.
+        finding.verified = source is not None and source.clean_text is not None
+        # A page's own structured publish-date metadata beats the LLM's
+        # text-based guess whenever it's available.
+        if source and source.published_date:
+            try:
+                finding.published_at = date.fromisoformat(source.published_date)
+            except ValueError:
+                pass  # malformed — keep whatever the LLM guessed
     print(f"  [{keyword}] structured {len(batch.findings)} finding(s): "
           + ", ".join(f"{f.category}" for f in batch.findings), flush=True)
     return batch
