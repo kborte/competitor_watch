@@ -9,6 +9,20 @@ export type Category =
   | "other";
 
 export type Materiality = "low" | "medium" | "high";
+export type Tone = "positive" | "negative" | "neutral" | "mixed";
+
+export type Line =
+  | "motor"
+  | "health"
+  | "travel"
+  | "marine"
+  | "energy"
+  | "aviation"
+  | "pab"
+  | "home"
+  | "yacht"
+  | "market_wide"
+  | "outside_our_lines";
 
 export type Window = "today" | "week" | "month" | "year" | "all";
 
@@ -36,6 +50,9 @@ export interface Finding {
   og_description: string | null;
   og_site_name: string | null;
   verified: boolean;
+  line: Line | null;
+  tone: Tone | null;
+  source_location: string | null;
 }
 
 export interface Change {
@@ -70,6 +87,52 @@ export interface Company {
 export interface CrawlStatus {
   latest_crawl_at: string | null;
 }
+
+export interface ToneCounts {
+  positive: number;
+  negative: number;
+  neutral: number;
+  mixed: number;
+}
+
+export interface StatsPeriod {
+  findings: number;
+  high_materiality: number;
+  tone: ToneCounts;
+}
+
+export interface DashboardStats {
+  window: Window;
+  current: StatsPeriod;
+  previous: StatsPeriod | null;
+  delta: number | null;
+  most_active: { company: string; count: number } | null;
+  qic_reference: {
+    mentions: number;
+    previous_mentions: number | null;
+    tone: ToneCounts;
+    previous_tone: ToneCounts | null;
+  };
+}
+
+export const LINES: Line[] = [
+  "motor", "health", "travel", "marine", "energy", "aviation", "pab", "home", "yacht",
+  "market_wide", "outside_our_lines",
+];
+
+export const LINE_LABELS: Record<Line, string> = {
+  motor: "Motor",
+  health: "Health",
+  travel: "Travel",
+  marine: "Marine",
+  energy: "Energy",
+  aviation: "Aviation",
+  pab: "PAB",
+  home: "Home",
+  yacht: "Yacht",
+  market_wide: "Market-wide",
+  outside_our_lines: "Outside our lines",
+};
 
 export const CATEGORIES: Category[] = [
   "product",

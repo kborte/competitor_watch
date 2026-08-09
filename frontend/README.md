@@ -23,8 +23,8 @@ Requires the backend (`../backend`) running and reachable at
 ## Structure
 
 - `app/` — routes, root layout, the TanStack Query provider.
-- `components/` — `Header` (crawl-freshness indicator), `FilterBar` (window/category/company),
-  `SortToggle`, `FeedList`/`FeedCard`, `RecordPanel` (detail view + audit-trail disclosure).
+- `components/` — sticky header and filters, KPI/attention panels, grouped feed, and the
+  evidence/detail panel with the existing snapshot and audit disclosures.
 - `lib/api.ts` — typed fetch wrappers for every backend endpoint.
 - `lib/types.ts` — TypeScript interfaces mirroring the API's response shapes.
 - `lib/time.ts` — fixed UTC+3 (Qatar, no DST) formatting, matching the backend's own window math.

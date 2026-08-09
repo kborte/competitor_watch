@@ -40,14 +40,33 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_image_url TEXT;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_description TEXT;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_site_name TEXT;
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS line TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS tone TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS source_location TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS is_reference BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS seen_urls (
-    source_url TEXT PRIMARY KEY,
+    source_url TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'competitor',
     category TEXT NOT NULL,
     first_seen_run_id TEXT NOT NULL,
     last_seen_run_id TEXT NOT NULL,
-    last_content_hash TEXT
+    last_content_hash TEXT,
+    PRIMARY KEY (source_url, scope)
 );
+
+ALTER TABLE seen_urls ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'competitor';
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'seen_urls'::regclass AND contype = 'p'
+          AND array_length(conkey, 1) = 1
+    ) THEN
+        ALTER TABLE seen_urls DROP CONSTRAINT seen_urls_pkey;
+        ALTER TABLE seen_urls ADD PRIMARY KEY (source_url, scope);
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS llm_calls (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -112,25 +131,29 @@ def insert_run(conn, run_id: str, received_at, raw_payload: dict) -> None:
         )
 
 
-def get_seen_url(conn, source_url: str):
+def get_seen_url(conn, source_url: str, scope: str = "competitor"):
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT category, last_content_hash FROM seen_urls WHERE source_url = %s", (source_url,)
+            "SELECT category, last_content_hash FROM seen_urls WHERE source_url = %s AND scope = %s",
+            (source_url, scope),
         )
         return cur.fetchone()
 
 
-def upsert_seen_url(conn, source_url: str, category: str, run_id: str, content_hash_value: str) -> None:
+def upsert_seen_url(
+    conn, source_url: str, category: str, run_id: str, content_hash_value: str,
+    scope: str = "competitor",
+) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO seen_urls (source_url, category, first_seen_run_id, last_seen_run_id, last_content_hash)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (source_url) DO UPDATE SET
+            INSERT INTO seen_urls (source_url, scope, category, first_seen_run_id, last_seen_run_id, last_content_hash)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (source_url, scope) DO UPDATE SET
                 last_seen_run_id = excluded.last_seen_run_id,
                 last_content_hash = excluded.last_content_hash
             """,
-            (source_url, category, run_id, run_id, content_hash_value),
+            (source_url, scope, category, run_id, run_id, content_hash_value),
         )
 
 
@@ -149,8 +172,9 @@ def insert_finding(conn, run_id: str, finding, is_duplicate: bool) -> int:
             INSERT INTO findings (run_id, keyword, company, category, platform, source_url, title,
                                    summary, source_excerpt, published_at, retrieved_at, is_duplicate,
                                    source_html, og_title, og_image_url, og_description, og_site_name,
-                                   verified)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   verified, line, tone, source_location, is_reference)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -163,6 +187,7 @@ def insert_finding(conn, run_id: str, finding, is_duplicate: bool) -> int:
                 _only_if_new(finding.og_description, is_duplicate),
                 _only_if_new(finding.og_site_name, is_duplicate),
                 finding.verified,
+                finding.line, finding.tone, finding.source_location, finding.is_reference,
             ),
         )
         return cur.fetchone()[0]

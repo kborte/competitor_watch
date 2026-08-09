@@ -83,13 +83,14 @@ def _order_sql(sort_by: str, sort_dir: str) -> str:
 
 
 def list_findings(
-    conn, *, company: str | None = None, category: str | None = None, window: str = "all",
+    conn, *, company: str | None = None, category: str | None = None, line: str | None = None,
+    materiality: str | None = None, window: str = "all",
     sort_by: str = "materiality", sort_dir: str = "desc", include_duplicates: bool = False,
     limit: int = DEFAULT_LIMIT, offset: int = 0,
 ) -> list[dict]:
     limit = max(1, min(limit, MAX_LIMIT))
 
-    clauses = []
+    clauses = ["f.is_reference = false"]
     params: list = []
     if not include_duplicates:
         clauses.append("f.is_duplicate = false")
@@ -108,6 +109,12 @@ def list_findings(
     if category:
         clauses.append("f.category = %s")
         params.append(category)
+    if line:
+        clauses.append("f.line = %s")
+        params.append(line)
+    if materiality:
+        clauses.append("c.materiality = %s")
+        params.append(materiality)
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     order_sql = _order_sql(sort_by, sort_dir)
@@ -116,6 +123,7 @@ def list_findings(
         SELECT f.id, f.keyword, f.company, f.category, f.platform, f.source_url, f.title,
                f.summary, f.source_excerpt, f.published_at, f.retrieved_at, f.is_duplicate,
                f.og_title, f.og_image_url, f.og_description, f.og_site_name, f.verified,
+               f.line, f.tone, f.source_location,
                c.materiality
         FROM findings f
         LEFT JOIN llm_calls lc ON lc.finding_id = f.id
@@ -222,6 +230,7 @@ def list_companies(conn) -> list[dict]:
                    COUNT(*) FILTER (WHERE {freshness("month")} AND NOT is_duplicate) AS new_this_month,
                    COUNT(*) AS total_findings
             FROM findings
+            WHERE NOT is_reference
             GROUP BY company
             """,
             {
@@ -245,3 +254,134 @@ def list_companies(conn) -> list[dict]:
         bucket["total_findings"] += row["total_findings"]
 
     return sorted(grouped.values(), key=lambda r: r["company"])
+
+
+def _period_clause(window: str, prior: bool, alias: str = "f") -> tuple[str | None, list]:
+    """Return a current or immediately preceding freshness-window clause.
+
+    The current window deliberately reuses list_findings' freshness rule. The
+    previous window is bounded on both sides so the two periods never overlap.
+    "all" has no meaningful preceding period.
+    """
+    current_retrieved, current_published = _window_bounds(window)
+    if current_retrieved is None:
+        return ("FALSE", []) if prior else (None, [])
+    if not prior:
+        return _freshness_sql(alias), [current_published, CRAWL_RECENCY_CATEGORIES, current_retrieved]
+
+    days = 1 if window == "today" else _WINDOW_DAYS[window]
+    previous_retrieved = current_retrieved - timedelta(days=days)
+    previous_published = current_published - timedelta(days=days)
+    clause = (
+        f"(({alias}.published_at IS NOT NULL AND {alias}.published_at >= %s "
+        f"AND {alias}.published_at < %s) OR "
+        f"({alias}.published_at IS NULL AND {alias}.category = ANY(%s) "
+        f"AND {alias}.retrieved_at >= %s AND {alias}.retrieved_at < %s))"
+    )
+    return clause, [previous_published, current_published, CRAWL_RECENCY_CATEGORIES,
+                    previous_retrieved, current_retrieved]
+
+
+def _stats_rows(
+    conn, *, company: str | None, category: str | None, line: str | None,
+    window: str, prior: bool, reference: bool,
+) -> list[dict]:
+    clauses = ["NOT f.is_duplicate", "f.is_reference = %s"]
+    params: list = [reference]
+    period_sql, period_params = _period_clause(window, prior)
+    if period_sql:
+        clauses.append(period_sql)
+        params.extend(period_params)
+    if not reference:
+        if company == companies.MARKET_BUCKET:
+            clauses.append("f.company != ALL(%s)")
+            params.append(companies.known_aliases())
+        elif company:
+            clauses.append("f.company = ANY(%s)")
+            params.append(companies.aliases_for(company))
+    if category:
+        clauses.append("f.category = %s")
+        params.append(category)
+    if line:
+        clauses.append("f.line = %s")
+        params.append(line)
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT f.company, COUNT(*) AS finding_count,
+                   COUNT(*) FILTER (WHERE c.materiality = 'high') AS high_count,
+                   COUNT(*) FILTER (WHERE f.category = 'social_sentiment' AND f.tone = 'positive') AS positive,
+                   COUNT(*) FILTER (WHERE f.category = 'social_sentiment' AND f.tone = 'negative') AS negative,
+                   COUNT(*) FILTER (WHERE f.category = 'social_sentiment' AND f.tone = 'neutral') AS neutral,
+                   COUNT(*) FILTER (WHERE f.category = 'social_sentiment' AND f.tone = 'mixed') AS mixed
+            FROM findings f
+            LEFT JOIN llm_calls lc ON lc.finding_id = f.id
+            LEFT JOIN changes c ON c.llm_call_id = lc.id
+            WHERE {' AND '.join(clauses)}
+            GROUP BY f.company
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
+def _stats_totals(rows: list[dict]) -> dict:
+    return {
+        "findings": sum(row["finding_count"] for row in rows),
+        "high_materiality": sum(row["high_count"] for row in rows),
+        "tone": {
+            tone: sum(row[tone] for row in rows)
+            for tone in ("positive", "negative", "neutral", "mixed")
+        },
+    }
+
+
+def get_stats(
+    conn, *, company: str | None = None, category: str | None = None,
+    line: str | None = None, window: str = "week",
+) -> dict:
+    current_rows = _stats_rows(
+        conn, company=company, category=category, line=line, window=window,
+        prior=False, reference=False,
+    )
+    previous_rows = [] if window == "all" else _stats_rows(
+        conn, company=company, category=category, line=line, window=window,
+        prior=True, reference=False,
+    )
+    qic_current_rows = _stats_rows(
+        conn, company=None, category=category, line=line, window=window,
+        prior=False, reference=True,
+    )
+    qic_previous_rows = [] if window == "all" else _stats_rows(
+        conn, company=None, category=category, line=line, window=window,
+        prior=True, reference=True,
+    )
+
+    current = _stats_totals(current_rows)
+    previous = None if window == "all" else _stats_totals(previous_rows)
+    qic_current = _stats_totals(qic_current_rows)
+    qic_previous = None if window == "all" else _stats_totals(qic_previous_rows)
+
+    company_counts: dict[str, int] = {}
+    for row in current_rows:
+        canonical = companies.canonical_name(row["company"])
+        company_counts[canonical] = company_counts.get(canonical, 0) + row["finding_count"]
+    most_active = None
+    if company_counts:
+        name, count = sorted(company_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+        most_active = {"company": name, "count": count}
+
+    return {
+        "window": window,
+        "current": current,
+        "previous": previous,
+        "delta": None if previous is None else current["findings"] - previous["findings"],
+        "most_active": most_active,
+        "qic_reference": {
+            "mentions": qic_current["findings"],
+            "previous_mentions": None if qic_previous is None else qic_previous["findings"],
+            "tone": qic_current["tone"],
+            "previous_tone": None if qic_previous is None else qic_previous["tone"],
+        },
+    }

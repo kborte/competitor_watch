@@ -18,7 +18,8 @@ client = genai.Client()
 PROMPT_TEMPLATE = """Research recent developments for "{keyword}" in the context of the \
 Qatar/GCC insurance market. Cover anything relevant across these angles: new or changed \
 insurance products, marketing campaigns or promotions, discounts or pricing changes, press/news \
-coverage, regulatory filings, and social sentiment (reviews, social media, forum mentions).
+coverage, regulatory filings, social sentiment (reviews, social media, forum mentions), and \
+website/app releases or other digital and non-insurance products.
 
 Be specific and cite sources for every claim — write several distinct, concrete items rather \
 than a general overview. If there's genuinely nothing recent, say so plainly."""

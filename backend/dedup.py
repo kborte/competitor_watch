@@ -41,7 +41,8 @@ def check(conn, finding) -> tuple[bool, str | None]:
     """Returns (needs_classification, content_hash)."""
     normalized = normalize_url(finding.source_url)
     hash_value = _content_hash(finding)
-    seen = db.get_seen_url(conn, normalized)
+    scope = "reference" if finding.is_reference else "competitor"
+    seen = db.get_seen_url(conn, normalized, scope)
 
     if seen is None:
         return True, hash_value

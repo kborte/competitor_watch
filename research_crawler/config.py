@@ -12,14 +12,15 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 BACKEND_INGEST_URL = os.environ["BACKEND_INGEST_URL"]  # e.g. http://localhost:8123/ingest
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
-# One special entry, MARKET_WIDE_KEYWORD, for broad market news not tied
-# to a specific tracked competitor. Every other entry is treated as a named
-# competitor: structure.py forces finding.company to exactly this string
-# for those, rather than trusting the LLM's independent guess (which has
+# MARKET_WIDE_KEYWORD gathers broad market news; QIC_REFERENCE_KEYWORD is
+# stored as a benchmark and excluded from the competitor feed. Every other
+# entry is a named competitor: structure.py forces finding.company to the
+# search subject rather than trusting the LLM's independent guess (which has
 # mistagged findings to an unrelated company mentioned in the article
 # instead of the competitor actually being searched for). These strings
-# must exactly match the canonical names in backend/companies.py.
+# Competitor strings must exactly match backend/companies.py's canonical names.
 MARKET_WIDE_KEYWORD = "Qatar general insurance market"
+QIC_REFERENCE_KEYWORD = "Qatar Insurance Company (QIC)"
 
 KEYWORDS = [
     "Bupa Arabia",
@@ -32,6 +33,7 @@ KEYWORDS = [
     "QIIC",
     "QLM",
     MARKET_WIDE_KEYWORD,
+    QIC_REFERENCE_KEYWORD,
 ]
 
 MODEL = "gemini-3.6-flash"

@@ -29,10 +29,18 @@ def process(payload: IngestPayload) -> dict:
             db.upsert_seen_url(
                 conn, dedup.normalize_url(finding.source_url), finding.category,
                 payload.routine_run_id, hash_value,
+                scope="reference" if finding.is_reference else "competitor",
             )
 
             if not needs_classification:
                 duplicate_count += 1
+                continue
+
+            # QIC is a benchmark, not a competitor. Its line/tone/source
+            # context is already structured by the crawler; assigning
+            # competitor materiality would be misleading and wasteful.
+            if finding.is_reference:
+                new_count += 1
                 continue
 
             try:

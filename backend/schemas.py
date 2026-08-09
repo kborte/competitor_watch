@@ -12,6 +12,13 @@ Category = Literal[
     "investment_or_acquisition", "financial_results", "other",
 ]
 
+Line = Literal[
+    "motor", "health", "travel", "marine", "energy", "aviation", "pab", "home", "yacht",
+    "market_wide", "outside_our_lines",
+]
+
+Tone = Literal["positive", "negative", "neutral", "mixed"]
+
 
 class Finding(BaseModel):
     keyword: str
@@ -30,6 +37,10 @@ class Finding(BaseModel):
     og_description: Optional[str] = None
     og_site_name: Optional[str] = None
     verified: bool = True
+    line: Optional[Line] = None
+    tone: Optional[Tone] = None
+    source_location: Optional[str] = None
+    is_reference: bool = False
 
 
 class IngestPayload(BaseModel):

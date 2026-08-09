@@ -12,9 +12,9 @@ export const COMPANY_LOGOS: Record<string, string> = {
   "Sukoon Insurance": "/logos/sukoon.svg",
   "Alkhaleej Takaful": "/logos/alkhaleej-takaful.png",
   "Beema": "/logos/beema.svg",
-  "Doha Insurance Group": "/logos/doha-insurance.png",
-  "Qatar Islamic Insurance Group": "/logos/qiic.png",
-  "QLM Life & Medical Insurance": "/logos/qlm.png",
+  "Doha Insurance": "/logos/doha-insurance.png",
+  "QIIC": "/logos/qiic.png",
+  "QLM": "/logos/qlm.png",
   "Qatar Insurance Company": "/logos/qic.png",
   "QGIRCO": "/logos/qgirco.jpg",
 };

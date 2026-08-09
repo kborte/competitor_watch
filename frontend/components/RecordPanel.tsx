@@ -4,151 +4,81 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { getFinding, getSnapshotUrl } from "@/lib/api";
-import { CATEGORY_LABELS } from "@/lib/types";
+import { CATEGORY_LABELS, LINE_LABELS } from "@/lib/types";
 import { formatQatarDate, formatQatarDateTime } from "@/lib/time";
 import { LinkPreviewCard } from "./LinkPreviewCard";
-
-const MATERIALITY_CLASS: Record<string, string> = {
-  high: "bg-rose-100 text-rose-700",
-  medium: "bg-slate-100 text-slate-600",
-  low: "bg-slate-100 text-slate-500",
-};
 
 export function RecordPanel({ id }: { id: number }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [showRawLog, setShowRawLog] = useState(false);
   const [showSnapshot, setShowSnapshot] = useState(false);
-
   const { data: summary, isLoading } = useQuery({
     queryKey: ["finding", id, "summary"],
     queryFn: () => getFinding(id, "summary"),
   });
-
   const { data: full } = useQuery({
     queryKey: ["finding", id, "full"],
     queryFn: () => getFinding(id, "full"),
     enabled: detailOpen,
   });
 
-  if (isLoading || !summary) {
-    return (
-      <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-400">
-        Loading record…
-      </div>
-    );
+  if (isLoading || !summary) return <div className="rounded-2xl border border-[#e9e9f2] bg-white p-8 text-sm text-[#8b8ba0]">Loading record…</div>;
+
+  let sourceName = summary.og_site_name;
+  if (!sourceName) {
+    try { sourceName = new URL(summary.source_url).hostname.replace(/^www\./, ""); } catch { sourceName = "Source"; }
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white">
-        <span className="tracking-wide">RECORD</span>
-        <a href={summary.source_url} target="_blank" rel="noreferrer" className="hover:underline">
-          Open source ↗
-        </a>
-      </div>
-
-      <div className="p-6">
-        <h2 className="text-xl font-bold text-slate-900">{summary.title}</h2>
-        <p className="mt-2 text-slate-600">{summary.summary}</p>
-
-        <div className="mt-4 flex gap-2">
-          <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600">
-            {CATEGORY_LABELS[summary.category]}
-          </span>
-          {summary.change && (
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${MATERIALITY_CLASS[summary.change.materiality]}`}
-            >
-              {summary.change.materiality[0].toUpperCase() + summary.change.materiality.slice(1)} materiality
-            </span>
-          )}
-          {!summary.verified && (
-            <span
-              className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700"
-              title="The source page couldn't be independently fetched — this claim rests on the research summary alone."
-            >
-              Unverified
-            </span>
-          )}
+    <aside className="overflow-hidden rounded-2xl border border-[#e9e9f2] bg-white">
+      <div className="max-h-[calc(100vh-14.5rem)] overflow-y-auto p-5">
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 truncate font-mono text-[10px] uppercase tracking-[0.1em] text-[#a3a3b8]">{sourceName}</span>
+          <a href={summary.source_url} target="_blank" rel="noreferrer" className="ml-auto shrink-0 text-xs font-semibold text-[#5b4fe8] hover:underline">Open source ↗</a>
         </div>
 
-        <hr className="my-5 border-slate-100" />
+        <h2 className="mt-3 text-xl font-semibold leading-snug tracking-tight">{summary.title}</h2>
+        <blockquote className="mt-4 border-l-2 border-[#5b4fe8] pl-3 text-sm leading-relaxed text-[#1a1633]">“{summary.source_excerpt}”</blockquote>
+        {summary.source_location && <p className="mt-2 pl-3 text-xs leading-relaxed text-[#8b8ba0]">{summary.source_location}</p>}
 
-        <div className="text-xs font-semibold tracking-wide text-slate-400">SOURCE</div>
-        <p className="mt-2 text-sm text-slate-700">{summary.source_url}</p>
-        <p className="mt-1 text-xs text-slate-400">
-          {summary.published_at && <>Published {formatQatarDate(summary.published_at)}&emsp;</>}
-          Retrieved {formatQatarDate(summary.retrieved_at)}
-        </p>
+        <div className="my-5 h-px bg-[#ededf4]" />
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+          <dt className="text-[#a3a3b8]">Line</dt><dd>{summary.line ? LINE_LABELS[summary.line] : "Unclassified"}</dd>
+          <dt className="text-[#a3a3b8]">Category</dt><dd>{CATEGORY_LABELS[summary.category]}</dd>
+          <dt className="text-[#a3a3b8]">Materiality</dt><dd className="capitalize">{summary.change?.materiality ?? "Unclassified"}</dd>
+          {summary.tone && <><dt className="text-[#a3a3b8]">Tone</dt><dd className="capitalize">{summary.tone}</dd></>}
+          <dt className="text-[#a3a3b8]">Published</dt><dd>{summary.published_at ? formatQatarDate(summary.published_at) : "Undated"}</dd>
+          <dt className="text-[#a3a3b8]">Retrieved</dt><dd>{formatQatarDate(summary.retrieved_at)}</dd>
+          <dt className="text-[#a3a3b8]">URL</dt><dd className="break-all font-mono text-[10px] leading-relaxed text-[#6c6c85]">{summary.source_url}</dd>
+        </dl>
 
-        <div className="mt-3">
-          <LinkPreviewCard
-            url={summary.source_url}
-            ogTitle={summary.og_title}
-            ogImageUrl={summary.og_image_url}
-            ogSiteName={summary.og_site_name}
-          />
+        {!summary.verified && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">The source page could not be independently fetched. This finding rests on the grounded research result.</div>}
+
+        <div className="mt-4">
+          <LinkPreviewCard url={summary.source_url} ogTitle={summary.og_title} ogImageUrl={summary.og_image_url} ogSiteName={summary.og_site_name} />
         </div>
-
-        <blockquote className="mt-4 border-l-2 border-indigo-200 pl-3 text-sm italic text-slate-600">
-          &ldquo;{summary.source_excerpt}&rdquo;
-        </blockquote>
 
         {summary.has_snapshot && (
           <div className="mt-4">
-            <button
-              className="text-sm font-semibold text-indigo-600 underline underline-offset-2"
-              onClick={() => setShowSnapshot((v) => !v)}
-            >
-              {showSnapshot ? "Hide captured page" : "View captured page"}
-            </button>
-            {showSnapshot && (
-              <iframe
-                src={getSnapshotUrl(id)}
-                sandbox=""
-                className="mt-3 h-96 w-full rounded-lg border border-slate-200"
-                title="Captured source page"
-              />
-            )}
+            <button className="text-xs font-semibold text-[#5b4fe8]" onClick={() => setShowSnapshot((value) => !value)}>{showSnapshot ? "Hide captured page" : "View captured page"}</button>
+            {showSnapshot && <iframe src={getSnapshotUrl(id)} sandbox="" className="mt-3 h-96 w-full rounded-lg border border-[#e9e9f2]" title="Captured source page" />}
           </div>
         )}
 
         <Collapsible.Root open={detailOpen} onOpenChange={setDetailOpen} className="mt-5">
-          <Collapsible.Trigger className="text-sm font-semibold text-indigo-600">
-            Why was it read this way? {detailOpen ? "▲" : "▼"}
-          </Collapsible.Trigger>
-          <Collapsible.Content className="mt-3 rounded-lg bg-indigo-50/60 p-4 text-sm text-slate-700">
-            {!full ? (
-              <p className="text-slate-400">Loading classification detail…</p>
-            ) : (
-              <>
-                {full.change && <p>{full.change.rationale}</p>}
-                {full.llm_call && (
-                  <>
-                    <p className="mt-3 font-mono text-xs text-slate-500">
-                      Model {full.llm_call.model} · confidence {full.change?.confidence.toFixed(2)}
-                    </p>
-                    <p className="font-mono text-xs text-slate-500">
-                      Retrieved {formatQatarDateTime(full.llm_call.called_at)}
-                    </p>
-                    <button
-                      className="mt-2 font-mono text-xs font-semibold text-indigo-600 underline underline-offset-2"
-                      onClick={() => setShowRawLog((v) => !v)}
-                    >
-                      raw log
-                    </button>
-                    {showRawLog && (
-                      <pre className="mt-2 max-h-64 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
-                        {full.llm_call.raw_output}
-                      </pre>
-                    )}
-                  </>
-                )}
-              </>
-            )}
+          <Collapsible.Trigger className="text-xs font-semibold text-[#5b4fe8]">{detailOpen ? "Hide classification detail" : "Why was it read this way?"}</Collapsible.Trigger>
+          <Collapsible.Content className="mt-3 space-y-2 rounded-xl bg-[#f6f5fe] p-4 text-xs leading-relaxed text-[#6c6c85]">
+            {!full ? <p>Loading classification detail…</p> : <>
+              {full.change && <p>{full.change.rationale}</p>}
+              {full.llm_call && <>
+                <p className="font-mono text-[10px] text-[#8b8ba0]">{full.llm_call.model} · confidence {full.change?.confidence.toFixed(2)} · {formatQatarDateTime(full.llm_call.called_at)}</p>
+                <button className="font-mono text-[10px] font-semibold text-[#5b4fe8] underline" onClick={() => setShowRawLog((value) => !value)}>raw log</button>
+                {showRawLog && <pre className="max-h-64 overflow-auto rounded-lg bg-[#1a1633] p-3 text-[10px] text-white">{full.llm_call.raw_output}</pre>}
+              </>}
+            </>}
           </Collapsible.Content>
         </Collapsible.Root>
       </div>
-    </div>
+    </aside>
   );
 }

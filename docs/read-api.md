@@ -24,6 +24,8 @@ List/search findings. Query params (all optional):
 |---|---|---|
 | `company` | canonical name or known alias | — |
 | `category` | `product`\|`marketing`\|`news`\|`social_sentiment`\|`regulatory`\|`other` | — |
+| `line` | `motor`\|`health`\|`travel`\|`marine`\|`energy`\|`aviation`\|`pab`\|`home`\|`yacht`\|`market_wide`\|`outside_our_lines` | — |
+| `materiality` | `low`\|`medium`\|`high` | — |
 | `window` | `today`\|`week`\|`month`\|`year`\|`all` | `all` |
 | `sort_by` | `materiality`\|`published_at`\|`retrieved_at` | `materiality` |
 | `sort_dir` | `asc`\|`desc` | `desc` |
@@ -39,6 +41,15 @@ Graph metadata captured from the source page at crawl time) for rendering a Mess
 link-preview card per finding. All four are commonly `null` — undated PDF/plain-text sources
 rarely have OG tags, and (like `source_html`) they're only ever populated on the finding that
 represents a genuinely new/changed content state, never on a duplicate re-sighting.
+Items also include `line`, optional social `tone`, and optional `source_location`. QIC reference
+observations are always excluded from this endpoint and from `/companies`.
+
+### `GET /stats`
+Dashboard aggregates. Accepts the same `company`, `category`, `line`, and `window` scope as
+`/findings`. Returns current and immediately preceding period totals, delta, high-materiality
+count, most-active canonical company, competitor tone totals, and QIC reference mention/tone
+totals. The QIC reference respects line/category/window but intentionally ignores the selected
+competitor. For `window=all`, `previous` and `delta` are `null`.
 
 ### `GET /findings/{id}`
 Full detail for one finding. Query param: `view` = `full` (default) or `summary`.

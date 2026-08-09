@@ -19,6 +19,10 @@ PROMPT_TEMPLATE = """Below is a research summary about "{keyword}" plus the actu
 text of each source it cited. Turn this into a list of distinct findings.
 
 For each finding:
+- line: exactly one of: motor, health, travel, marine, energy, aviation, pab (personal accident \
+and business), home, yacht, market_wide, outside_our_lines. Website and app are channels, not \
+lines: use the underlying insurance line when specific, market_wide for a cross-line platform \
+change, and outside_our_lines for a genuinely non-insurance product or a cover QIC does not write.
 - category: exactly one of these factual buckets (not a judgment about importance):
   - product: a change to what's actually offered — new coverage, features, pricing structure.
   - marketing: campaigns, promotions, sponsorships, brand pushes.
@@ -40,6 +44,11 @@ name whichever specific company (if any) a finding is really about.
 - source_excerpt: a VERBATIM substring copied from that source's fetched text below — not a \
 paraphrase. If a claim's source has no fetched text (fetch failed), summarize the claim from \
 the research summary instead — no need to caveat this in the text, that's tracked separately.
+- source_location: a short human-readable location for the excerpt when the fetched text makes \
+one identifiable (for example, "Third paragraph under Renewals" or "Opening paragraph"); omit \
+it rather than guessing when the location is unclear.
+- tone: for social_sentiment findings, exactly one of positive, negative, neutral, or mixed. \
+Omit it for other categories.
 - published_at: YYYY-MM-DD if it's mentioned anywhere in the source text, else omit. (Used only \
 as a fallback — a page's real publish-date metadata is extracted separately and takes priority \
 over this guess when available.)
@@ -84,7 +93,10 @@ def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> Find
         # which has mistagged findings to some other company merely
         # mentioned in the article (e.g. a partner bank) instead of the
         # one actually being tracked.
-        if keyword != config.MARKET_WIDE_KEYWORD:
+        if keyword == config.QIC_REFERENCE_KEYWORD:
+            finding.company = "Qatar Insurance Company"
+            finding.is_reference = True
+        elif keyword != config.MARKET_WIDE_KEYWORD:
             finding.company = keyword
         source = sources_by_url.get(finding.source_url)
         finding.source_html = source.raw_html if source else None

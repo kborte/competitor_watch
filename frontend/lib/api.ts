@@ -4,6 +4,9 @@ import type {
   CrawlStatus,
   Finding,
   FindingDetail,
+  DashboardStats,
+  Line,
+  Materiality,
   SortBy,
   SortDir,
   View,
@@ -33,6 +36,8 @@ async function getJson<T>(path: string, params?: object): Promise<T> {
 export interface ListFindingsParams {
   company?: string;
   category?: Category;
+  line?: Line;
+  materiality?: Materiality;
   window?: Window;
   sort_by?: SortBy;
   sort_dir?: SortDir;
@@ -59,4 +64,15 @@ export function listCompanies(): Promise<Company[]> {
 
 export function getCrawlStatus(): Promise<CrawlStatus> {
   return getJson<CrawlStatus>("/crawl-status");
+}
+
+export interface GetStatsParams {
+  company?: string;
+  category?: Category;
+  line?: Line;
+  window?: Window;
+}
+
+export function getStats(params: GetStatsParams = {}): Promise<DashboardStats> {
+  return getJson<DashboardStats>("/stats", params);
 }
