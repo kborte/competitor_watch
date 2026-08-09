@@ -46,7 +46,10 @@ def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, lis
     which catches whatever still slips through.)"""
     search_kwargs = {}
     if time_range_days is not None:
-        now = datetime.now(timezone.utc)
+        # Whole seconds only — the API rejects sub-second precision with
+        # "Granularity of nano is not supported", and datetime.now()
+        # carries microseconds.
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         search_kwargs["time_range_filter"] = types.Interval(
             start_time=now - timedelta(days=time_range_days), end_time=now,
         )
