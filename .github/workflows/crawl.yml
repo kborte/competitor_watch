@@ -4,7 +4,15 @@ on:
   schedule:
     # 05:00 UTC ≈ 08:00 Doha time — before business hours. Adjust as needed.
     - cron: "0 5 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      search_window_days:
+        description: >-
+          Days back the Gemini search is scoped to. Leave blank for the
+          normal daily default (3). Set to 365 to run the one-time initial
+          backfill for a fresh deployment or newly-added keyword.
+        required: false
+        type: string
 
 jobs:
   crawl:
@@ -23,3 +31,4 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BACKEND_INGEST_URL: ${{ secrets.BACKEND_INGEST_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          SEARCH_WINDOW_DAYS: ${{ inputs.search_window_days || '3' }}

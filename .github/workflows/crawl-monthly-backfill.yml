@@ -1,0 +1,31 @@
+name: Competitor research crawl — monthly backfill
+
+# A recurring wider net on top of the daily crawl.yml's narrow window —
+# catches sources that only recently got indexed/became newly relevant
+# even though older than the daily default covers. Not the same as the
+# one-time initial year-wide backfill, which is a manual workflow_dispatch
+# override on crawl.yml instead of a separate schedule.
+
+on:
+  schedule:
+    - cron: "0 5 1 * *" # 1st of each month, same time as the daily crawl
+  workflow_dispatch: {}
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r research_crawler/requirements.txt
+
+      - run: python -m research_crawler.crawler
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BACKEND_INGEST_URL: ${{ secrets.BACKEND_INGEST_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          SEARCH_WINDOW_DAYS: "30"
