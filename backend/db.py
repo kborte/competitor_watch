@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS findings (
 );
 
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS source_html TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_title TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_image_url TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_description TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS og_site_name TEXT;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS seen_urls (
     source_url TEXT PRIMARY KEY,
@@ -129,24 +134,35 @@ def upsert_seen_url(conn, source_url: str, category: str, run_id: str, content_h
         )
 
 
+def _only_if_new(value, is_duplicate: bool):
+    """Several fields (the HTML snapshot, link-preview metadata) only earn
+    storage on the finding that actually represents a new/changed content
+    state — re-storing identical values on every unchanged crawl tick would
+    be pure waste."""
+    return value if not is_duplicate else None
+
+
 def insert_finding(conn, run_id: str, finding, is_duplicate: bool) -> int:
-    # Only the finding that actually represents a new/changed content state
-    # earns a stored snapshot — re-storing an identical blob on every
-    # unchanged crawl tick would be pure waste.
-    source_html = finding.source_html if not is_duplicate else None
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO findings (run_id, keyword, company, category, platform, source_url, title,
                                    summary, source_excerpt, published_at, retrieved_at, is_duplicate,
-                                   source_html)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   source_html, og_title, og_image_url, og_description, og_site_name,
+                                   verified)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 run_id, finding.keyword, finding.company, finding.category, finding.platform,
                 finding.source_url, finding.title, finding.summary, finding.source_excerpt,
-                finding.published_at, finding.retrieved_at, is_duplicate, source_html,
+                finding.published_at, finding.retrieved_at, is_duplicate,
+                _only_if_new(finding.source_html, is_duplicate),
+                _only_if_new(finding.og_title, is_duplicate),
+                _only_if_new(finding.og_image_url, is_duplicate),
+                _only_if_new(finding.og_description, is_duplicate),
+                _only_if_new(finding.og_site_name, is_duplicate),
+                finding.verified,
             ),
         )
         return cur.fetchone()[0]

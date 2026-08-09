@@ -23,8 +23,10 @@ from . import config, db, reads
 from . import ingest as ingest_logic
 from .schemas import IngestPayload
 
-VALID_WINDOWS = {"today", "week", "month", "all"}
+VALID_WINDOWS = {"today", "week", "month", "year", "all"}
 VALID_VIEWS = {"full", "summary"}
+VALID_SORT_BY = {"materiality", "published_at", "retrieved_at"}
+VALID_SORT_DIR = {"asc", "desc"}
 
 app = FastAPI()
 db.init_db()
@@ -60,14 +62,18 @@ async def ingest(request: Request, authorization: str = Header(...)):
 @app.get("/findings")
 def list_findings(
     company: str | None = None, category: str | None = None, window: str = "all",
-    prioritized: bool | None = None, include_duplicates: bool = False,
+    sort_by: str = "materiality", sort_dir: str = "desc", include_duplicates: bool = False,
     limit: int = reads.DEFAULT_LIMIT, offset: int = 0,
 ):
     if window not in VALID_WINDOWS:
         raise HTTPException(status_code=422, detail=f"window must be one of {sorted(VALID_WINDOWS)}")
+    if sort_by not in VALID_SORT_BY:
+        raise HTTPException(status_code=422, detail=f"sort_by must be one of {sorted(VALID_SORT_BY)}")
+    if sort_dir not in VALID_SORT_DIR:
+        raise HTTPException(status_code=422, detail=f"sort_dir must be one of {sorted(VALID_SORT_DIR)}")
     with db.connect() as conn:
         return reads.list_findings(
-            conn, company=company, category=category, window=window, prioritized=prioritized,
+            conn, company=company, category=category, window=window, sort_by=sort_by, sort_dir=sort_dir,
             include_duplicates=include_duplicates, limit=limit, offset=offset,
         )
 

@@ -2,8 +2,18 @@
 
 Base URL: the deployed backend's origin (e.g. `https://competitor-watch-backend.onrender.com`).
 No authentication on any endpoint below — access is scoped only by CORS to the known
-frontend origins. All timestamps in responses are UTC; `today`/`week`/`month` windows are
-computed server-side using Qatar local time (UTC+3).
+frontend origins. All timestamps in responses are UTC; `today`/`week`/`month`/`year` windows
+are computed server-side using Qatar local time (UTC+3).
+
+Window recency prefers `published_at` over `retrieved_at` — a source published a year ago
+that the crawler only just discovered isn't treated as "new." `published_at` is often null
+(undated social/review sources), in which case that finding falls back to `retrieved_at`
+recency instead of disappearing from every window but "all."
+
+`company` is matched against a backend-side canonical registry (`backend/companies.py`) that
+groups known spelling/format variants of the same real company (e.g. "ADNIC" and "Abu Dhabi
+National Insurance Company") — pass either the canonical name or any known alias, and both
+`GET /companies` and the `company` filter here resolve to the same grouped entity.
 
 ## Endpoints
 
@@ -12,17 +22,23 @@ List/search findings. Query params (all optional):
 
 | param | values | default |
 |---|---|---|
-| `company` | exact match | — |
+| `company` | canonical name or known alias | — |
 | `category` | `product`\|`marketing`\|`news`\|`social_sentiment`\|`regulatory`\|`other` | — |
-| `window` | `today`\|`week`\|`month`\|`all` | `all` |
-| `prioritized` | bool | `true` if window is `week`/`month`, else `false` |
+| `window` | `today`\|`week`\|`month`\|`year`\|`all` | `all` |
+| `sort_by` | `materiality`\|`published_at`\|`retrieved_at` | `materiality` |
+| `sort_dir` | `asc`\|`desc` | `desc` |
 | `include_duplicates` | bool | `false` |
 | `limit` | 1–200 | 50 |
 | `offset` | int | 0 |
 
-When `prioritized` is in effect, results sort by materiality (high → medium → low), then
-recency. Otherwise, plain recency. Response items **exclude** `source_html` and any LLM
-audit data — this is a light listing payload.
+`sort_by=materiality` ranks high → medium → low (or reversed under `asc`), with recency as
+the tiebreak; the other two fields sort directly (nulls sort last regardless of direction).
+Response items **exclude** `source_html` and any LLM audit data — this is a light listing
+payload — but **include** `og_title`/`og_image_url`/`og_description`/`og_site_name` (Open
+Graph metadata captured from the source page at crawl time) for rendering a Messenger-style
+link-preview card per finding. All four are commonly `null` — undated PDF/plain-text sources
+rarely have OG tags, and (like `source_html`) they're only ever populated on the finding that
+represents a genuinely new/changed content state, never on a duplicate re-sighting.
 
 ### `GET /findings/{id}`
 Full detail for one finding. Query param: `view` = `full` (default) or `summary`.
@@ -40,8 +56,10 @@ Raw captured HTML of the source page at observation time, served as `text/html`
 or if no snapshot was captured for it (duplicates never get one; see caveat below).
 
 ### `GET /companies`
-Per-company aggregate counts: `new_today`, `new_this_week`, `new_this_month`,
-`total_findings`. Good for sidebar badges.
+Per-canonical-company aggregate counts: `new_today`, `new_this_week`, `new_this_month`,
+`total_findings` — counts are summed across all known raw-string aliases of that company
+(see the canonical registry note above). Good for sidebar badges. The `new_*` counts use
+the same `published_at`-with-`retrieved_at`-fallback freshness logic as `GET /findings`.
 
 ### `GET /crawl-status`
 `{"latest_crawl_at": <ISO timestamp with UTC offset, or null if no findings exist yet>}` —
@@ -55,8 +73,8 @@ timezone setting.
 This is a UI convention, not enforced access control — both frontends can call any
 endpoint above. But for a high-signal, low-noise executive view:
 
-- **`GET /findings?window=week`** (or `month`) — already sorts by materiality by
-  default, so the highest-signal items surface first.
+- **`GET /findings?window=week`** (or `month`) — `sort_by` defaults to `materiality`
+  `desc`, so the highest-signal items surface first without passing anything extra.
 - **`GET /findings/{id}?view=summary`** when drilling into one item — gives the
   materiality judgment and rationale without raw LLM prompt/output.
 - **Skip `/findings/{id}/snapshot` and `view=full`** — those are the audit/investigation
