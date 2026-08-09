@@ -6,6 +6,7 @@ import * as Collapsible from "@radix-ui/react-collapsible";
 import { getFinding, getSnapshotUrl } from "@/lib/api";
 import { CATEGORY_LABELS } from "@/lib/types";
 import { formatQatarDate, formatQatarDateTime } from "@/lib/time";
+import { LinkPreviewCard } from "./LinkPreviewCard";
 
 const MATERIALITY_CLASS: Record<string, string> = {
   high: "bg-rose-100 text-rose-700",
@@ -61,6 +62,14 @@ export function RecordPanel({ id }: { id: number }) {
               {summary.change.materiality[0].toUpperCase() + summary.change.materiality.slice(1)} materiality
             </span>
           )}
+          {!summary.verified && (
+            <span
+              className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700"
+              title="The source page couldn't be independently fetched — this claim rests on the research summary alone."
+            >
+              Unverified
+            </span>
+          )}
         </div>
 
         <hr className="my-5 border-slate-100" />
@@ -71,6 +80,15 @@ export function RecordPanel({ id }: { id: number }) {
           {summary.published_at && <>Published {formatQatarDate(summary.published_at)}&emsp;</>}
           Retrieved {formatQatarDate(summary.retrieved_at)}
         </p>
+
+        <div className="mt-3">
+          <LinkPreviewCard
+            url={summary.source_url}
+            ogTitle={summary.og_title}
+            ogImageUrl={summary.og_image_url}
+            ogSiteName={summary.og_site_name}
+          />
+        </div>
 
         <blockquote className="mt-4 border-l-2 border-indigo-200 pl-3 text-sm italic text-slate-600">
           &ldquo;{summary.source_excerpt}&rdquo;

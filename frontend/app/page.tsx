@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listCompanies, listFindings } from "@/lib/api";
-import type { Category, Window } from "@/lib/types";
+import type { Category, SortBy, SortDir, Window } from "@/lib/types";
 import { FilterBar } from "@/components/FilterBar";
-import { SortToggle } from "@/components/SortToggle";
+import { SortSelect } from "@/components/SortSelect";
 import { FeedList } from "@/components/FeedList";
 import { RecordPanel } from "@/components/RecordPanel";
 
@@ -13,10 +13,9 @@ export default function Home() {
   const [windowValue, setWindowValue] = useState<Window>("week");
   const [category, setCategory] = useState<Category | undefined>(undefined);
   const [company, setCompany] = useState<string | undefined>(undefined);
-  const [chronological, setChronological] = useState(false);
+  const [sortBy, setSortBy] = useState<SortBy>("materiality");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedId, setSelectedId] = useState<number | undefined>(undefined);
-
-  const canPrioritize = windowValue === "week" || windowValue === "month";
 
   const { data: companies = [] } = useQuery({
     queryKey: ["companies"],
@@ -24,13 +23,14 @@ export default function Home() {
   });
 
   const { data: findings = [], isLoading } = useQuery({
-    queryKey: ["findings", windowValue, category, company, canPrioritize && chronological],
+    queryKey: ["findings", windowValue, category, company, sortBy, sortDir],
     queryFn: () =>
       listFindings({
         window: windowValue,
         category,
         company,
-        prioritized: canPrioritize ? !chronological : undefined,
+        sort_by: sortBy,
+        sort_dir: sortDir,
       }),
   });
 
@@ -54,13 +54,14 @@ export default function Home() {
 
       <div className="grid flex-1 grid-cols-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <div>
-          {canPrioritize && (
-            <SortToggle
-              chronological={chronological}
-              onToggle={() => setChronological((v) => !v)}
-              count={findings.length}
-            />
-          )}
+          <SortSelect
+            sortBy={sortBy}
+            sortDir={sortDir}
+            onChange={(newSortBy, newSortDir) => {
+              setSortBy(newSortBy);
+              setSortDir(newSortDir);
+            }}
+          />
           <FeedList findings={findings} selectedId={effectiveSelectedId} onSelect={setSelectedId} isLoading={isLoading} />
         </div>
 

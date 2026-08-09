@@ -2,7 +2,8 @@
 
 import type { Finding } from "@/lib/types";
 import { CATEGORY_LABELS } from "@/lib/types";
-import { formatRelativeQatarDay } from "@/lib/time";
+import { formatQatarDate, formatRelativeQatarDay } from "@/lib/time";
+import { LinkPreviewCard } from "./LinkPreviewCard";
 
 const MATERIALITY_CLASS: Record<string, string> = {
   high: "bg-rose-100 text-rose-700",
@@ -17,18 +18,19 @@ interface FeedCardProps {
 }
 
 export function FeedCard({ finding, selected, onSelect }: FeedCardProps) {
-  let sourceDomain = finding.source_url;
-  try {
-    sourceDomain = new URL(finding.source_url).hostname.replace(/^www\./, "");
-  } catch {
-    // leave as-is if it's not a parseable URL
-  }
-
+  // A <div> acting as a button, not a real <button> — LinkPreviewCard
+  // renders an <a>, and nesting interactive `<a>`/`<button>` elements
+  // inside a `<button>` is invalid HTML (and breaks focus/click behavior).
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onSelect();
+      }}
       className={[
-        "w-full rounded-xl border bg-white p-4 text-left transition-colors",
+        "w-full cursor-pointer rounded-xl border bg-white p-4 text-left transition-colors",
         selected ? "border-indigo-400 ring-1 ring-indigo-400" : "border-slate-200 hover:border-slate-300",
       ].join(" ")}
     >
@@ -43,6 +45,14 @@ export function FeedCard({ finding, selected, onSelect }: FeedCardProps) {
             {finding.materiality[0].toUpperCase() + finding.materiality.slice(1)}
           </span>
         )}
+        {!finding.verified && (
+          <span
+            className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"
+            title="The source page couldn't be independently fetched — this claim rests on the research summary alone."
+          >
+            Unverified
+          </span>
+        )}
         <span className="ml-auto shrink-0 text-xs text-slate-400">
           {formatRelativeQatarDay(finding.retrieved_at)}
         </span>
@@ -50,7 +60,20 @@ export function FeedCard({ finding, selected, onSelect }: FeedCardProps) {
 
       <h3 className="mt-2 text-base font-semibold text-slate-900">{finding.title}</h3>
       <p className="mt-1 text-sm text-slate-600">{finding.summary}</p>
-      <p className="mt-2 truncate text-xs text-slate-400">{sourceDomain}</p>
-    </button>
+
+      <p className="mt-2 text-xs text-slate-400">
+        {finding.published_at && <>Published {formatQatarDate(finding.published_at)} · </>}
+        Crawled {formatQatarDate(finding.retrieved_at)}
+      </p>
+
+      <div className="mt-3">
+        <LinkPreviewCard
+          url={finding.source_url}
+          ogTitle={finding.og_title}
+          ogImageUrl={finding.og_image_url}
+          ogSiteName={finding.og_site_name}
+        />
+      </div>
+    </div>
   );
 }

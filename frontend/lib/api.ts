@@ -4,6 +4,8 @@ import type {
   CrawlStatus,
   Finding,
   FindingDetail,
+  SortBy,
+  SortDir,
   View,
   Window,
 } from "./types";
@@ -32,7 +34,8 @@ export interface ListFindingsParams {
   company?: string;
   category?: Category;
   window?: Window;
-  prioritized?: boolean;
+  sort_by?: SortBy;
+  sort_dir?: SortDir;
   include_duplicates?: boolean;
   limit?: number;
   offset?: number;
