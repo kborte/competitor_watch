@@ -1,0 +1,14 @@
+.git
+.github
+frontend
+research_crawler
+docs
+__pycache__
+**/__pycache__
+*.pyc
+backend/.env
+research_crawler/.env
+*.json
+mockup_v4.html
+render.yaml
+.DS_Store
