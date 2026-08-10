@@ -19,6 +19,10 @@ PROMPT_TEMPLATE = """Below is a research summary about "{keyword}" plus the actu
 text of each source it cited. Turn this into a list of distinct findings.
 
 For each finding:
+- title: a concise, specific headline describing the actual finding. For social_sentiment, put \
+the common sentiment and its concrete cause directly in the title (for example, "Sukoon \
+customers report delays in medical approvals and motor repairs"). Do not use generic labels \
+such as "Customer Reviews", "User Feedback", "App Review", or "Reddit Discussion".
 - line: exactly one of: motor, health, travel, marine, energy, aviation, pab (personal accident \
 and business), home, yacht, market_wide, outside_our_lines. Website and app are channels, not \
 lines: use the underlying insurance line when specific, market_wide for a cross-line platform \

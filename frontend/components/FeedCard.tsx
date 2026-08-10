@@ -3,6 +3,7 @@
 import type { Category, Finding, Line } from "@/lib/types";
 import { CATEGORY_LABELS, LINE_LABELS } from "@/lib/types";
 import { formatRelativeQatarDay } from "@/lib/time";
+import { headlineForFinding } from "@/lib/findings";
 
 const MATERIALITY_LABEL = { high: "HIGH", medium: "MED", low: "LOW" } as const;
 
@@ -15,6 +16,7 @@ interface FeedCardProps {
 }
 
 export function FeedCard({ finding, selected, onSelect, onLineSelect, onCategorySelect }: FeedCardProps) {
+  const headline = headlineForFinding(finding);
   return (
     <div
       role="button"
@@ -27,7 +29,7 @@ export function FeedCard({ finding, selected, onSelect, onLineSelect, onCategory
     >
       <span className={selected ? "bg-[#5b4fe8]" : "bg-transparent"} />
       <div className="min-w-0 py-3.5">
-        <h3 className={`text-sm leading-snug tracking-tight ${finding.materiality === "high" ? "font-semibold" : "font-medium"} ${finding.materiality === "low" ? "text-[#4a4a63]" : "text-[#1a1633]"}`}>{finding.title}</h3>
+        <h3 className={`text-sm leading-snug tracking-tight ${finding.materiality === "high" ? "font-semibold" : "font-medium"} ${finding.materiality === "low" ? "text-[#4a4a63]" : "text-[#1a1633]"}`}>{headline}</h3>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold">{finding.company}</span>
           <span className="h-0.5 w-0.5 rounded-full bg-[#c9c9d8]" />

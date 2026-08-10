@@ -6,6 +6,7 @@ import * as Collapsible from "@radix-ui/react-collapsible";
 import { getFinding, getSnapshotUrl } from "@/lib/api";
 import { CATEGORY_LABELS, LINE_LABELS } from "@/lib/types";
 import { formatQatarDate, formatQatarDateTime } from "@/lib/time";
+import { headlineForFinding } from "@/lib/findings";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 
 export function RecordPanel({ id }: { id: number }) {
@@ -37,7 +38,7 @@ export function RecordPanel({ id }: { id: number }) {
           <a href={summary.source_url} target="_blank" rel="noreferrer" className="ml-auto shrink-0 text-xs font-semibold text-[#5b4fe8] hover:underline">Open source ↗</a>
         </div>
 
-        <h2 className="mt-3 text-xl font-semibold leading-snug tracking-tight">{summary.title}</h2>
+        <h2 className="mt-3 text-xl font-semibold leading-snug tracking-tight">{headlineForFinding(summary)}</h2>
         <blockquote className="mt-4 border-l-2 border-[#5b4fe8] pl-3 text-sm leading-relaxed text-[#1a1633]">“{summary.source_excerpt}”</blockquote>
         {summary.source_location && <p className="mt-2 pl-3 text-xs leading-relaxed text-[#8b8ba0]">{summary.source_location}</p>}
 
