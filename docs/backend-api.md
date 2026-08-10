@@ -43,6 +43,13 @@ Beema · Doha Insurance · QIIC · QLM · Qatar Insurance Market
 ministries, regulators, and anything the market-wide keyword turns up. Filtering on it is an
 inverse match, not an alias lookup.
 
+> **`GET /findings` returns the raw `company` string, not the canonical name.** A finding
+> about a QCB circular comes back as `"company": "Qatar Central Bank"`, while `GET /companies`
+> and `stats.most_active` report it under `"Qatar Insurance Market"`. Filtering
+> `?company=Qatar Insurance Market` *does* return it, because the filter canonicalizes — but
+> the response body does not. If you group the feed client-side by `finding.company`, your
+> buckets will not match the sidebar's. Map it yourself, or filter server-side.
+
 **QIC is a benchmark, not a competitor.** QIC findings are stored with `is_reference = true`
 and excluded from `GET /findings` and `GET /companies` entirely. They surface only in the
 `qic_reference` block of `GET /stats`.
@@ -161,7 +168,9 @@ Notes on the payload:
   tags, and like `source_html` they are only ever populated on the finding representing a new
   or changed content state, never on a duplicate re-sighting.
 - `verified` is false when the crawler could not independently fetch the page the model cited.
-- `source_location` is a free-text hint for social findings (which app store, which forum).
+- `source_location` is a short human-readable pointer to where in the page the excerpt came
+  from — `"Introduction"`, `"Third paragraph under Renewals"`. Applies to any category, and is
+  omitted rather than guessed when the location isn't identifiable.
 
 ## `GET /stats`
 
