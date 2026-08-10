@@ -1,7 +1,7 @@
 # Competitor Watch — middle-management dashboard
 
 Next.js (App Router, TypeScript) frontend for the middle-management audience
-described in [`../docs/read-api.md`](../docs/read-api.md). Client-fetched via
+described in [`../docs/backend-api.md`](../docs/backend-api.md). Client-fetched via
 TanStack Query straight against the deployed backend — no server-rendering,
 no auth (the backend's read endpoints are open; CORS is the only guard).
 
@@ -31,6 +31,15 @@ Requires the backend (`../backend`) running and reachable at
 
 ## Deploying
 
-Vercel, zero-config. Set `NEXT_PUBLIC_API_BASE_URL` to the deployed backend's
-URL in the Vercel project's environment variables — that's the only
-production config needed.
+Vercel, zero-config. Live at https://competitor-watch-qic.vercel.app.
+
+Two settings, on both sides:
+
+1. `NEXT_PUBLIC_API_BASE_URL` in the Vercel project's environment variables, pointed at
+   https://competitor-watch-backend-407920901425.me-central1.run.app. It's inlined at build
+   time, so **redeploy after changing it** — setting the variable alone does nothing.
+2. `FRONTEND_ORIGINS` on the backend must include this app's origin, or every request fails
+   CORS while `curl` keeps working. See [`../DEPLOY.md`](../DEPLOY.md) step 4b.
+
+Preview deployments get their own `*.vercel.app` hostnames, which aren't in
+`FRONTEND_ORIGINS` — so previews fail CORS unless you add them (it splits on commas).
