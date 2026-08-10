@@ -1,7 +1,6 @@
-"""Core ingest logic — dedup, classify, store — shared between the HTTP
-route (main.py) and the MCP tool (mcp_server.py). Both are just different
-transports for delivering the same validated IngestPayload; the processing
-itself doesn't care which one it came from."""
+"""Core ingest logic — dedup, classify, store — sitting behind the HTTP
+route in main.py. Kept separate from the transport so the processing
+doesn't care how a validated IngestPayload arrived."""
 
 from datetime import datetime, timezone
 

@@ -13,7 +13,6 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 DATABASE_URL = os.environ["DATABASE_URL"]
-MCP_PUBLIC_HOST = os.environ.get("MCP_PUBLIC_HOST")  # e.g. "some-name.trycloudflare.com" — no scheme, no port
 
 # Comma-separated origins allowed to call the read API, e.g.
 # "https://middle-mgmt.qic.qa,https://upper-mgmt.qic.qa" — the read endpoints

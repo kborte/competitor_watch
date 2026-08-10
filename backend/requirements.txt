@@ -3,5 +3,4 @@ uvicorn[standard]
 google-genai
 python-dotenv
 psycopg2-binary
-mcp[cli]
 beautifulsoup4
