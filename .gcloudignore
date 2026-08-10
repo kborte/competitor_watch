@@ -1,0 +1,20 @@
+# gcloud builds submit uploads this folder as the build context. Without
+# this file it falls back to .gitignore, which doesn't exclude the frontend
+# or the sample data — a slow upload of things the backend image never uses.
+.git
+.github
+frontend
+research_crawler
+docs
+__pycache__
+**/__pycache__
+*.pyc
+backend/.env
+research_crawler/.env
+payload.json
+snapshots.json
+mockup_v4.html
+render.yaml
+ai-intern-key.json
+*-key.json
+.DS_Store
