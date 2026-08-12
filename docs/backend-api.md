@@ -36,7 +36,7 @@ Canonical names:
 
 ```
 Bupa Arabia · Tawuniya · ADNIC · Sukoon Insurance · Alkhaleej Takaful
-Beema · Doha Insurance · QIIC · QLM · Qatar Insurance Market
+Beema · Doha Insurance · QIIC · Qatar Insurance Market
 ```
 
 `Qatar Insurance Market` is a special bucket meaning "not any tracked competitor" — banks,

@@ -31,7 +31,6 @@ KEYWORDS = [
     "Beema",
     "Doha Insurance",
     "QIIC",
-    "QLM",
     MARKET_WIDE_KEYWORD,
     QIC_REFERENCE_KEYWORD,
 ]

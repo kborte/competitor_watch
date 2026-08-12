@@ -70,12 +70,6 @@ REGISTRY: list[CompanyEntry] = [
         "Qatar Islamic Insurance Company",
         "Qatar Islamic Insurance",
     )),
-    CompanyEntry("QLM", (
-        "QLM",
-        "QLM Life & Medical Insurance",
-        "QLM Life & Medical Insurance Company",
-        "QLM Life & Medical Insurance Company QPSC",
-    )),
 ]
 
 _ALIAS_TO_CANONICAL = {alias: entry.canonical_name for entry in REGISTRY for alias in entry.aliases}

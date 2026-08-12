@@ -14,7 +14,6 @@ export const COMPANY_LOGOS: Record<string, string> = {
   "Beema": "/logos/beema.svg",
   "Doha Insurance": "/logos/doha-insurance.png",
   "QIIC": "/logos/qiic.png",
-  "QLM": "/logos/qlm.png",
   "Qatar Insurance Company": "/logos/qic.png",
   "QGIRCO": "/logos/qgirco.jpg",
 };
