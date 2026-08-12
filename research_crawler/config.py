@@ -31,6 +31,11 @@ KEYWORDS = [
     "Beema",
     "Doha Insurance",
     "QIIC",
+    # Deliberately the full form, not "Qatar General Insurance": that would sit
+    # a hair away from MARKET_WIDE_KEYWORD above, and a named-competitor keyword
+    # force-tags every finding it produces (structure.py), so the overlap would
+    # relabel generic market news as this company.
+    "Qatar General Insurance & Reinsurance",
     MARKET_WIDE_KEYWORD,
     QIC_REFERENCE_KEYWORD,
 ]

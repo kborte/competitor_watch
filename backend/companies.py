@@ -70,6 +70,17 @@ REGISTRY: list[CompanyEntry] = [
         "Qatar Islamic Insurance Company",
         "Qatar Islamic Insurance",
     )),
+    CompanyEntry("Qatar General Insurance & Reinsurance", (
+        "Qatar General Insurance & Reinsurance",
+        "Qatar General Insurance and Reinsurance",
+        "Qatar General Insurance & Reinsurance Company",
+        "Qatar General Insurance and Reinsurance Company",
+        "Qatar General Insurance and Reinsurance Company Q.P.S.C.",
+        "Qatar General Insurance",
+        "Qatar General",
+        "QGIRCO",
+        "QGIRC",
+    )),
 ]
 
 _ALIAS_TO_CANONICAL = {alias: entry.canonical_name for entry in REGISTRY for alias in entry.aliases}

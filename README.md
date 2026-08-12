@@ -1,6 +1,6 @@
 # Competitor Watch
 
-Automated competitor intelligence for QIC. Once a day it searches for news about eight
+Automated competitor intelligence for QIC. Once a day it searches for news about nine
 tracked insurers plus the Qatar market at large, verifies every source it finds, judges how
 much each item matters, and serves the result to a dashboard.
 
@@ -91,16 +91,17 @@ cp research_crawler/.env.example research_crawler/.env   # BACKEND_INGEST_URL, W
 python -m research_crawler.crawler
 ```
 
-It runs all 10 keywords sequentially with a 5-minute budget each, so expect 5–50 minutes.
+It runs all 11 keywords sequentially with a 5-minute budget each, so expect 5–55 minutes.
 `SEARCH_WINDOW_DAYS=3` by default; set it higher to backfill.
 
 Frontend: see [frontend/README.md](frontend/README.md).
 
 ## What it tracks
 
-Eight competitors — Bupa Arabia, Tawuniya, ADNIC, Sukoon Insurance, Alkhaleej Takaful, Beema,
-Doha Insurance, QIIC — plus a market-wide keyword and QIC itself as a benchmark
-reference. QIC findings are stored but excluded from the competitor feed.
+Nine competitors — Bupa Arabia, Tawuniya, ADNIC, Sukoon Insurance, Alkhaleej Takaful, Beema,
+Doha Insurance, QIIC, Qatar General Insurance & Reinsurance — plus a market-wide keyword and
+QIC itself as a benchmark reference. QIC findings are stored but excluded from the competitor
+feed.
 
 Adding or removing a competitor means editing two files, and they must agree exactly:
 `research_crawler/config.py` (`KEYWORDS`) and `backend/companies.py` (`REGISTRY`). Anything
