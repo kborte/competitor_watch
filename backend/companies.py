@@ -86,11 +86,16 @@ MARKET_BUCKET = "Qatar Insurance Market"
 # bucket legitimately holds banks, ministries and regulators the market-wide
 # keyword turns up. Without this list a retired competitor's findings would
 # silently inflate the market bucket, indistinguishable from real market news.
+# Spelling drift applies here exactly as it does to REGISTRY: the market-wide
+# keyword is exempt from structure.py's company override, so the model is free
+# to invent variants ("... and Medical" vs "... & Medical"). A retired company
+# will keep turning up in market-wide results, so expect to add to this list.
 RETIRED_ALIASES: tuple[str, ...] = (
     "QLM",
     "QLM Life & Medical Insurance",
     "QLM Life & Medical Insurance Company",
     "QLM Life & Medical Insurance Company QPSC",
+    "QLM Life and Medical Insurance",
 )
 
 
