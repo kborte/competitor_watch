@@ -50,6 +50,12 @@ inverse match, not an alias lookup.
 > the response body does not. If you group the feed client-side by `finding.company`, your
 > buckets will not match the sidebar's. Map it yourself, or filter server-side.
 
+**Retired competitors are filtered out.** A company dropped from tracking keeps its
+historical findings in the database, but `RETIRED_ALIASES` in `backend/companies.py` hides
+them from `GET /findings`, `GET /stats`, `GET /companies`, and `GET /crawl-status`. They stay
+reachable by direct id (`GET /findings/{id}` and `/snapshot`) so the audit trail isn't lost.
+QLM is currently the only retired entry.
+
 **QIC is a benchmark, not a competitor.** QIC findings are stored with `is_reference = true`
 and excluded from `GET /findings` and `GET /companies` entirely. They surface only in the
 `qic_reference` block of `GET /stats`.

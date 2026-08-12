@@ -78,6 +78,21 @@ _CANONICAL_TO_ALIASES = {entry.canonical_name: list(entry.aliases) for entry in 
 
 MARKET_BUCKET = "Qatar Insurance Market"
 
+# Companies deliberately dropped from tracking. Their findings stay in the
+# database — the audit chain is the point of storing them, and deleting would
+# cascade through llm_calls and changes — but the read API filters them out.
+# This has to be an explicit list rather than "anything not in REGISTRY":
+# canonical_name() sends every unregistered string to MARKET_BUCKET, and that
+# bucket legitimately holds banks, ministries and regulators the market-wide
+# keyword turns up. Without this list a retired competitor's findings would
+# silently inflate the market bucket, indistinguishable from real market news.
+RETIRED_ALIASES: tuple[str, ...] = (
+    "QLM",
+    "QLM Life & Medical Insurance",
+    "QLM Life & Medical Insurance Company",
+    "QLM Life & Medical Insurance Company QPSC",
+)
+
 
 def canonical_name(raw_company: str) -> str:
     """Canonical display name for a raw company string, or MARKET_BUCKET
@@ -92,6 +107,13 @@ def aliases_for(canonical_or_raw: str) -> list[str]:
     finite alias list, since it covers whatever ISN'T a tracked
     competitor."""
     return _CANONICAL_TO_ALIASES.get(canonical_or_raw, [canonical_or_raw])
+
+
+def retired_aliases() -> list[str]:
+    """Raw company strings the read API must hide (see RETIRED_ALIASES). An
+    empty list is safe in SQL — `company != ALL('{}')` is vacuously true, so
+    nothing gets filtered when nothing is retired."""
+    return list(RETIRED_ALIASES)
 
 
 def known_aliases() -> list[str]:

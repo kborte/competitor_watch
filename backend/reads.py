@@ -90,8 +90,8 @@ def list_findings(
 ) -> list[dict]:
     limit = max(1, min(limit, MAX_LIMIT))
 
-    clauses = ["f.is_reference = false"]
-    params: list = []
+    clauses = ["f.is_reference = false", "f.company != ALL(%s)"]
+    params: list = [companies.retired_aliases()]
     if not include_duplicates:
         clauses.append("f.is_duplicate = false")
     retrieved_cutoff, published_cutoff = _window_bounds(window)
@@ -199,8 +199,14 @@ def inject_base_href(html: str, base_url: str) -> str:
 
 
 def get_latest_crawl_at(conn) -> datetime | None:
+    # Retired companies excluded too: their newest rows are frozen at whenever
+    # tracking stopped, so counting them would report a "last crawled" time
+    # that no longer moves.
     with conn.cursor() as cur:
-        cur.execute("SELECT MAX(retrieved_at) FROM findings")
+        cur.execute(
+            "SELECT MAX(retrieved_at) FROM findings WHERE company != ALL(%s)",
+            (companies.retired_aliases(),),
+        )
         return cur.fetchone()[0]
 
 
@@ -230,7 +236,7 @@ def list_companies(conn) -> list[dict]:
                    COUNT(*) FILTER (WHERE {freshness("month")} AND NOT is_duplicate) AS new_this_month,
                    COUNT(*) AS total_findings
             FROM findings
-            WHERE NOT is_reference
+            WHERE NOT is_reference AND company != ALL(%(retired)s)
             GROUP BY company
             """,
             {
@@ -238,6 +244,7 @@ def list_companies(conn) -> list[dict]:
                 "week_date": published_week, "week_instant": retrieved_week,
                 "month_date": published_month, "month_instant": retrieved_month,
                 "crawl_recency_cats": CRAWL_RECENCY_CATEGORIES,
+                "retired": companies.retired_aliases(),
             },
         )
         raw_rows = cur.fetchall()
@@ -286,8 +293,8 @@ def _stats_rows(
     conn, *, company: str | None, category: str | None, line: str | None,
     window: str, prior: bool, reference: bool,
 ) -> list[dict]:
-    clauses = ["NOT f.is_duplicate", "f.is_reference = %s"]
-    params: list = [reference]
+    clauses = ["NOT f.is_duplicate", "f.is_reference = %s", "f.company != ALL(%s)"]
+    params: list = [reference, companies.retired_aliases()]
     period_sql, period_params = _period_clause(window, prior)
     if period_sql:
         clauses.append(period_sql)
