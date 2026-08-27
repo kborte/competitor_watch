@@ -1,34 +1,28 @@
-"""Canonical company registry — the LLM's normalized `company` field on
-Finding drifts in spelling/format across crawls (e.g. "ADNIC" vs "Abu Dhabi
-National Insurance Company" are the same real company; confirmed by seeing
-both show up independently in real crawl data). This registry maps each of
-the tracked real competitors to every raw string variant seen for it, so
-/companies and /findings?company=... can group/filter correctly regardless
-of which spelling a given crawl happened to produce.
+"""Canonical company registry — one real competitor, many spellings.
 
-The canonical names here are EXACTLY the tracked competitors — the same
-list as research_crawler/config.py's KEYWORDS, minus its market-wide
-entry. Nothing else is ever its own entity. Adding a canonical entry here
-adds a filter chip to the dashboard, so don't add one for a company that
-merely appears in an article (a partner bank, a regulator, an acquirer);
-those belong in the market bucket.
-
-Any raw `company` string NOT listed here — a bank, a ministry, a
-regulator, or anything else that isn't a tracked competitor, most often
-produced by the market-wide search keyword — falls back to "Qatar
-Insurance Market" rather than getting its own chip. The trade-off: a
-genuinely new competitor appearing before someone adds it here also lands
-in that bucket until the registry is updated."""
+The LLM's `company` field drifts across crawls ("ADNIC" and "Abu Dhabi National
+Insurance Company" both turn up for the same firm), so this maps every raw variant
+seen to one canonical name. That lets /companies and /findings?company=... group
+and filter correctly no matter which spelling a given crawl produced. Anything
+unrecognized falls into the "Qatar Insurance Market" bucket.
+"""
 
 from dataclasses import dataclass
 
 
 @dataclass
 class CompanyEntry:
+    """One real company and every raw string that should resolve to it."""
+
     canonical_name: str
     aliases: tuple[str, ...]  # includes canonical_name itself
 
 
+# The canonical names here are EXACTLY the tracked competitors — the same list
+# as research_crawler/config.py's KEYWORDS, minus its market-wide entry. Adding
+# an entry adds a filter chip to the dashboard, so don't add one for a company
+# that merely appears in an article (a partner bank, a regulator, an acquirer);
+# those belong in the market bucket.
 REGISTRY: list[CompanyEntry] = [
     CompanyEntry("Bupa Arabia", (
         "Bupa Arabia",
@@ -70,14 +64,20 @@ REGISTRY: list[CompanyEntry] = [
         "Qatar Islamic Insurance Company",
         "Qatar Islamic Insurance",
     )),
-    CompanyEntry("Qatar General Insurance & Reinsurance", (
+    # The one entry whose canonical name is NOT also its search keyword. The
+    # crawler searches the full legal-ish form (a bare "Qatar General" is too
+    # close to the market-wide keyword to search on), but the dashboard chip
+    # reads better short — so the keyword lives in the alias list instead.
+    CompanyEntry("Qatar General", (
+        "Qatar General",
         "Qatar General Insurance & Reinsurance",
         "Qatar General Insurance and Reinsurance",
         "Qatar General Insurance & Reinsurance Company",
         "Qatar General Insurance and Reinsurance Company",
+        "Qatar General Insurance & Reinsurance Co.",
+        "Qatar General Insurance and Reinsurance Co.",
         "Qatar General Insurance and Reinsurance Company Q.P.S.C.",
         "Qatar General Insurance",
-        "Qatar General",
         "QGIRCO",
         "QGIRC",
     )),
@@ -87,20 +87,19 @@ _ALIAS_TO_CANONICAL = {alias: entry.canonical_name for entry in REGISTRY for ali
 _CANONICAL_TO_ALIASES = {entry.canonical_name: list(entry.aliases) for entry in REGISTRY}
 
 
+# Where every unregistered company string lands: banks, ministries and
+# regulators the market-wide keyword turns up, and also any genuinely new
+# competitor that appears before someone adds it to REGISTRY above.
 MARKET_BUCKET = "Qatar Insurance Market"
 
 # Companies deliberately dropped from tracking. Their findings stay in the
-# database — the audit chain is the point of storing them, and deleting would
-# cascade through llm_calls and changes — but the read API filters them out.
-# This has to be an explicit list rather than "anything not in REGISTRY":
-# canonical_name() sends every unregistered string to MARKET_BUCKET, and that
-# bucket legitimately holds banks, ministries and regulators the market-wide
-# keyword turns up. Without this list a retired competitor's findings would
-# silently inflate the market bucket, indistinguishable from real market news.
-# Spelling drift applies here exactly as it does to REGISTRY: the market-wide
-# keyword is exempt from structure.py's company override, so the model is free
-# to invent variants ("... and Medical" vs "... & Medical"). A retired company
-# will keep turning up in market-wide results, so expect to add to this list.
+# database — the audit chain is the point of storing them — but the read API
+# hides them. This must be an explicit list rather than "anything not in
+# REGISTRY", because unregistered strings fall into MARKET_BUCKET, which
+# legitimately holds banks and regulators; without it a retired competitor would
+# silently inflate that bucket. Expect to keep adding: a retired company still
+# turns up in market-wide results, and those are exempt from structure.py's
+# company override, so the model invents fresh spelling variants.
 RETIRED_ALIASES: tuple[str, ...] = (
     "QLM",
     "QLM Life & Medical Insurance",
@@ -111,30 +110,24 @@ RETIRED_ALIASES: tuple[str, ...] = (
 
 
 def canonical_name(raw_company: str) -> str:
-    """Canonical display name for a raw company string, or MARKET_BUCKET
-    if it's not a known tracked competitor at all."""
+    """Canonical display name for a raw company string, or MARKET_BUCKET if it
+    is not a tracked competitor."""
     return _ALIAS_TO_CANONICAL.get(raw_company, MARKET_BUCKET)
 
 
 def aliases_for(canonical_or_raw: str) -> list[str]:
-    """Every raw string variant that should match this canonical name, or
-    just the input itself if it's not a registry entry. Not meaningful for
-    MARKET_BUCKET — that's an inverse set (see known_aliases()), not a
-    finite alias list, since it covers whatever ISN'T a tracked
-    competitor."""
+    """Every raw string that should match this canonical name, or the input
+    itself if unregistered. Not meaningful for MARKET_BUCKET — see known_aliases()."""
     return _CANONICAL_TO_ALIASES.get(canonical_or_raw, [canonical_or_raw])
 
 
 def retired_aliases() -> list[str]:
-    """Raw company strings the read API must hide (see RETIRED_ALIASES). An
-    empty list is safe in SQL — `company != ALL('{}')` is vacuously true, so
-    nothing gets filtered when nothing is retired."""
+    """Raw company strings the read API must hide."""
+    # Safe when empty: `company != ALL('{}')` is vacuously true in SQL.
     return list(RETIRED_ALIASES)
 
 
 def known_aliases() -> list[str]:
-    """Every raw string recognized as belonging to some tracked
-    competitor — used to build the inverse "everything else" filter for
-    MARKET_BUCKET (a company filter for the bucket means "not any of
-    these", not "matches one of these")."""
+    """Every raw string belonging to some tracked competitor, for building the
+    inverse "everything else" filter that defines MARKET_BUCKET."""
     return list(_ALIAS_TO_CANONICAL.keys())

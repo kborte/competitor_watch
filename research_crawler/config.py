@@ -1,5 +1,10 @@
-"""Crawler configuration — env vars only. Deployed independently from the
-backend, so this reads its own .env, not the backend's."""
+"""Crawler configuration — env vars and the keyword list.
+
+Deployed independently from the backend, so this reads its own .env, not the
+backend's. KEYWORDS is the list the crawl iterates: one grounded search per
+entry. GEMINI_API_KEY is not read here — the Gemini SDK picks it up from the
+environment on its own.
+"""
 
 import os
 
@@ -7,18 +12,19 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-# GEMINI_API_KEY is not read here; the Gemini SDK picks it up from the
-# environment on its own.
 BACKEND_INGEST_URL = os.environ["BACKEND_INGEST_URL"]  # e.g. http://localhost:8123/ingest
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
-# MARKET_WIDE_KEYWORD gathers broad market news; QIC_REFERENCE_KEYWORD is
-# stored as a benchmark and excluded from the competitor feed. Every other
-# entry is a named competitor: structure.py forces finding.company to the
-# search subject rather than trusting the LLM's independent guess (which has
-# mistagged findings to an unrelated company mentioned in the article
-# instead of the competitor actually being searched for). These strings
-# Competitor strings must exactly match backend/companies.py's canonical names.
+# MARKET_WIDE_KEYWORD gathers broad market news; QIC_REFERENCE_KEYWORD is stored
+# as a benchmark and excluded from the competitor feed. Every other entry is a
+# named competitor: structure.py forces finding.company to the search subject
+# rather than trusting the LLM's independent guess, which has mistagged findings
+# to an unrelated company merely mentioned in the article.
+#
+# Each competitor string must be a recognized alias in backend/companies.py —
+# normally the canonical name itself, though a keyword chosen for search quality
+# can differ from the dashboard name (see the Qatar General entry there). A
+# keyword matching no alias silently lands in the market bucket.
 MARKET_WIDE_KEYWORD = "Qatar general insurance market"
 QIC_REFERENCE_KEYWORD = "Qatar Insurance Company (QIC)"
 

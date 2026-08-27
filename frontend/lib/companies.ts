@@ -15,7 +15,7 @@ export const COMPANY_LOGOS: Record<string, string> = {
   "Doha Insurance": "/logos/doha-insurance.png",
   "QIIC": "/logos/qiic.png",
   "Qatar Insurance Company": "/logos/qic.png",
-  "Qatar General Insurance & Reinsurance": "/logos/qgirco.jpg",
+  "Qatar General": "/logos/qgirco.jpg",
 };
 
 export function logoForCompany(company: string): string | null {
