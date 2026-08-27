@@ -1,37 +1,35 @@
-"""FastAPI app.
+"""FastAPI app — the HTTP surface, and nothing else.
 
-POST /ingest validates the shared secret, validates the payload against
-the JSON contract (via the IngestPayload model), stores it verbatim, then
-runs two-tier dedup before spending an LLM call on anything. Idempotent on
-routine_run_id, so a retried delivery is a no-op rather than a duplicate.
-
-The GET routes below it are the read API backing the frontend — additive,
-no auth (see FRONTEND_ORIGINS in config.py for the CORS-only guard), and
-they don't touch the write path at all.
+POST /ingest is the write path (secret, validate, hand to ingest.py); the GET
+routes are the read API behind the dashboard, guarded only by a CORS allowlist.
+Both keep their logic elsewhere, so this file stays a translation from request
+params to a call and back to a response.
 
 Run locally:
     WEBHOOK_SECRET=... uvicorn backend.main:app --reload --port 8000
 """
 
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
-from . import config, db, reads
+from . import config, db, htmlutil, reads
 from . import ingest as ingest_logic
-from .schemas import IngestPayload
+from .schemas import Category, IngestPayload, Line
 
-VALID_WINDOWS = {"today", "week", "month", "year", "all"}
-VALID_VIEWS = {"full", "summary"}
-VALID_SORT_BY = {"materiality", "published_at", "retrieved_at"}
-VALID_SORT_DIR = {"asc", "desc"}
-VALID_LINES = {
-    "motor", "health", "travel", "marine", "energy", "aviation", "pab", "home", "yacht",
-    "market_wide", "outside_our_lines",
-}
-VALID_MATERIALITY = {"low", "medium", "high"}
+# Query-param vocabularies. Declared as types rather than checked by hand:
+# FastAPI rejects anything outside them with a 422 before the route body
+# runs, so there is no validation code to keep in step with the values.
+# Category and Line come straight from schemas.py — the same literals the
+# ingest contract uses, so the read API can't drift from what's stored.
+Window = Literal["today", "week", "month", "year", "all"]
+View = Literal["full", "summary"]
+SortBy = Literal["materiality", "published_at", "retrieved_at"]
+SortDir = Literal["asc", "desc"]
+Materiality = Literal["low", "medium", "high"]
 
 app = FastAPI()
 db.init_db()
@@ -47,6 +45,8 @@ if config.FRONTEND_ORIGINS:
 
 @app.post("/ingest")
 async def ingest(request: Request, authorization: str = Header(...)):
+    """Accepts one crawler delivery. 401 on a bad secret, 422 on a malformed
+    body (which is stored in rejected_payloads before being rejected)."""
     if authorization != f"Bearer {config.WEBHOOK_SECRET}":
         raise HTTPException(status_code=401, detail="bad secret")
 
@@ -66,21 +66,13 @@ async def ingest(request: Request, authorization: str = Header(...)):
 
 @app.get("/findings")
 def list_findings(
-    company: str | None = None, category: str | None = None, line: str | None = None,
-    materiality: str | None = None, window: str = "all",
-    sort_by: str = "materiality", sort_dir: str = "desc", include_duplicates: bool = False,
+    company: str | None = None, category: Category | None = None, line: Line | None = None,
+    materiality: Materiality | None = None, window: Window = "all",
+    sort_by: SortBy = "materiality", sort_dir: SortDir = "desc", include_duplicates: bool = False,
     limit: int = reads.DEFAULT_LIMIT, offset: int = 0,
 ):
-    if window not in VALID_WINDOWS:
-        raise HTTPException(status_code=422, detail=f"window must be one of {sorted(VALID_WINDOWS)}")
-    if sort_by not in VALID_SORT_BY:
-        raise HTTPException(status_code=422, detail=f"sort_by must be one of {sorted(VALID_SORT_BY)}")
-    if sort_dir not in VALID_SORT_DIR:
-        raise HTTPException(status_code=422, detail=f"sort_dir must be one of {sorted(VALID_SORT_DIR)}")
-    if line is not None and line not in VALID_LINES:
-        raise HTTPException(status_code=422, detail=f"line must be one of {sorted(VALID_LINES)}")
-    if materiality is not None and materiality not in VALID_MATERIALITY:
-        raise HTTPException(status_code=422, detail=f"materiality must be one of {sorted(VALID_MATERIALITY)}")
+    """The competitor feed. Every enum param is validated by its type before
+    this runs; `company` is not, so an unknown value simply matches nothing."""
     with db.connect() as conn:
         return reads.list_findings(
             conn, company=company, category=category, line=line, materiality=materiality,
@@ -91,21 +83,17 @@ def list_findings(
 
 @app.get("/stats")
 def get_stats(
-    company: str | None = None, category: str | None = None,
-    line: str | None = None, window: str = "week",
+    company: str | None = None, category: Category | None = None,
+    line: Line | None = None, window: Window = "week",
 ):
-    if window not in VALID_WINDOWS:
-        raise HTTPException(status_code=422, detail=f"window must be one of {sorted(VALID_WINDOWS)}")
-    if line is not None and line not in VALID_LINES:
-        raise HTTPException(status_code=422, detail=f"line must be one of {sorted(VALID_LINES)}")
+    """Dashboard KPIs for a window, with a delta against the preceding one."""
     with db.connect() as conn:
         return reads.get_stats(conn, company=company, category=category, line=line, window=window)
 
 
 @app.get("/findings/{finding_id}")
-def get_finding(finding_id: int, view: str = "full"):
-    if view not in VALID_VIEWS:
-        raise HTTPException(status_code=422, detail=f"view must be one of {sorted(VALID_VIEWS)}")
+def get_finding(finding_id: int, view: View = "full"):
+    """One finding with its audit trail. 404 if the id does not exist."""
     with db.connect() as conn:
         result = reads.get_finding(conn, finding_id, view=view)
     if result is None:
@@ -115,6 +103,7 @@ def get_finding(finding_id: int, view: str = "full"):
 
 @app.get("/findings/{finding_id}/snapshot")
 def get_snapshot(finding_id: int):
+    """The archived source page as it looked when observed."""
     with db.connect() as conn:
         snapshot = reads.get_snapshot(conn, finding_id)
     if snapshot is None:
@@ -122,7 +111,7 @@ def get_snapshot(finding_id: int):
     if snapshot["html"] is None:
         raise HTTPException(status_code=404, detail="no snapshot captured for this finding")
 
-    html = reads.inject_base_href(snapshot["html"], snapshot["source_url"])
+    html = htmlutil.inject_base_href(snapshot["html"], snapshot["source_url"])
     # CSP sandbox (no tokens) blocks any script in the captured page from
     # executing, enforced by the browser regardless of how the frontend
     # embeds this response — not reliant on the consumer remembering a
@@ -132,11 +121,13 @@ def get_snapshot(finding_id: int):
 
 @app.get("/companies")
 def list_companies():
+    """Tracked competitors with per-window finding counts, for the filter chips."""
     with db.connect() as conn:
         return reads.list_companies(conn)
 
 
 @app.get("/crawl-status")
 def get_crawl_status():
+    """When the crawler last delivered anything, for the staleness indicator."""
     with db.connect() as conn:
         return {"latest_crawl_at": reads.get_latest_crawl_at(conn)}

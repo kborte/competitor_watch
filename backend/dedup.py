@@ -1,44 +1,45 @@
-"""Two-tier deterministic dedup — the only novelty decision in the system.
+"""Two-tier novelty check — the only place "is this new?" is decided.
 
-A never-seen source_url always proceeds to classification. A seen news/
-social_sentiment URL is a duplicate by default (those are one-shot; an
-article essentially never gets rewritten into something materially
-different after publish). A seen product/marketing URL is re-hashed on
-every sighting — those are a competitor's own stable pages, and a hash
-change there is exactly the signal the original page-crawler was built to
-catch.
-
-The hash is computed over the page's clean text (derived from the
-captured source_html), not the LLM's chosen excerpt — hashing the excerpt
-made "did this page change" depend on which sentence the model happened to
-quote, rather than the page itself. When source_html is unavailable (the
-LLM's source_url didn't match any independently-fetched source), there's
-nothing to hash: treat it as needing classification rather than guessing,
-and carry a None hash forward so the next sighting stays in that same
-state until a capture actually succeeds."""
+The crawler reports every relevant finding on every run, repeats included, so
+this is what stops the backend paying for an LLM call on the same page twice. A
+never-seen URL is always new; a seen one depends on whether its category is the
+kind of page that gets rewritten in place.
+"""
 
 from urllib.parse import urlsplit, urlunsplit
 
 from . import db
 from .htmlutil import extract_clean_text
 
+# Categories whose URLs are a competitor's own stable pages rather than one-shot
+# publications. These get re-hashed on every sighting, because a content change
+# there is precisely the signal this system exists to catch. Everything else —
+# news, social posts — is written once and never meaningfully rewritten, so a
+# repeat sighting is just a repeat.
 STABLE_URL_CATEGORIES = {"product", "marketing"}
 
 
 def normalize_url(url: str) -> str:
+    """Strips query, fragment and trailing slash so trivially different URLs for
+    the same page share one ledger entry."""
     parts = urlsplit(url)
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, "", ""))
 
 
 def _content_hash(finding) -> str | None:
+    """Hashes the captured page's clean text, or None when no HTML was captured."""
+    # Hashing the page rather than the LLM's chosen excerpt: hashing the excerpt
+    # made "did this page change" depend on which sentence the model happened to
+    # quote, rather than on the page itself.
     if not finding.source_html:
         return None
     return db.content_hash(extract_clean_text(finding.source_html))
 
 
 def check(conn, finding) -> tuple[bool, str | None]:
-    """Returns (needs_classification, content_hash)."""
+    """Decides whether a finding earns a classification call.
+    Returns (needs_classification, content_hash_to_record)."""
     normalized = normalize_url(finding.source_url)
     hash_value = _content_hash(finding)
     scope = "reference" if finding.is_reference else "competitor"
@@ -51,6 +52,9 @@ def check(conn, finding) -> tuple[bool, str | None]:
     if finding.category not in STABLE_URL_CATEGORIES:
         return False, hash_value
 
+    # No capture to compare, on either side. Treat it as needing classification
+    # rather than guessing, and carry the None forward so the next sighting stays
+    # in this state until a capture actually succeeds.
     if hash_value is None or last_hash is None:
         return True, hash_value
 

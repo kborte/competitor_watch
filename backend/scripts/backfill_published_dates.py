@@ -1,19 +1,10 @@
-"""One-off maintenance script: recover `published_at` for findings stored
-before deterministic date extraction existed (they only ever got the LLM's
-text-based guess, which usually came back empty because the page's real
-date lives in <meta>/JSON-LD markup that never survives into the text the
-LLM sees).
-
-    python3 -m backend.scripts.backfill_published_dates            # dry run
-    python3 -m backend.scripts.backfill_published_dates --apply    # writes
+"""One-off: recover published_at for findings stored before date extraction existed.
 
 Re-fetches each undated finding's source_url and runs the crawler's own
-extract_published_date() over the fresh HTML, so the crawler and this
-backfill can never disagree about what a date is. Fetches once per
-distinct URL (many findings share one) with a small delay between hits.
+extract_published_date() over the fresh HTML, so the two can never disagree. Rows
+still null afterwards are genuinely dateless — evergreen pages, app-store entries.
 
-Rows that stay null after this are genuinely dateless — evergreen listing
-pages, app-store entries, offer pages — not extraction failures.
+    python3 -m backend.scripts.backfill_published_dates [--apply]
 """
 
 import argparse
@@ -51,6 +42,7 @@ def resolve_date(url: str, timeout: int = 15) -> str | None:
 
 
 def run(apply: bool, limit: int | None = None) -> None:
+    """Fetches each distinct undated URL once and writes back any date found."""
     with db.connect() as conn:
         with conn.cursor() as cur:
             query = """
@@ -95,6 +87,7 @@ def run(apply: bool, limit: int | None = None) -> None:
 
 
 def main() -> None:
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Actually write changes (default: dry-run)")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N distinct URLs")

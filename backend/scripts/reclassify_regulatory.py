@@ -1,21 +1,11 @@
-"""One-off maintenance script: re-classify existing `regulatory`-tagged
-findings against the expanded category taxonomy (investment_or_acquisition
-and financial_results added; regulatory tightened to mean compliance/
-licensing/conduct specifically, not "a regulator was involved somewhere").
-Not part of the app's normal runtime — run manually:
+"""One-off: re-classify `regulatory` findings against the expanded taxonomy.
 
-    python3 -m backend.scripts.reclassify_regulatory              # dry run, inspect only
-    python3 -m backend.scripts.reclassify_regulatory --limit 5    # dry run, just a few
-    python3 -m backend.scripts.reclassify_regulatory --apply      # actually writes changes
+Added investment_or_acquisition and financial_results, and tightened regulatory to
+mean compliance/licensing specifically. Uses its own prompt rather than
+classify.py, which judges materiality and takes the crawler's category as given.
 
-classify.py's existing LLM call doesn't fit this job: its prompt only ever
-echoes back the routine's already-assigned category — it's never asked to
-judge category independently, despite Classification.category being a
-required output field. This script uses its own dedicated prompt instead.
-
-Runs as one transaction (all reclassifications commit together, or none
-do if something goes wrong partway through) via backend.db.connect()'s
-existing commit-on-clean-exit behavior."""
+    python3 -m backend.scripts.reclassify_regulatory [--limit N] [--apply]
+"""
 
 import argparse
 
@@ -53,10 +43,13 @@ Return exactly one category from the list above — the one that best fits, even
 
 
 class _CategoryOnly(BaseModel):
+    """Category alone — this script re-judges nothing else."""
+
     category: Category
 
 
 def reclassify_one(title: str, summary: str, source_excerpt: str) -> str:
+    """Asks the model to re-bucket one finding under the current taxonomy."""
     prompt = PROMPT_TEMPLATE.format(title=title, summary=summary, source_excerpt=source_excerpt)
     response = client.models.generate_content(
         model=MODEL, contents=prompt,
@@ -66,6 +59,7 @@ def reclassify_one(title: str, summary: str, source_excerpt: str) -> str:
 
 
 def run(apply: bool, limit: int | None = None) -> None:
+    """Re-judges every regulatory finding, as one all-or-nothing transaction."""
     with db.connect() as conn:
         with conn.cursor() as cur:
             query = "SELECT id, title, summary, source_excerpt FROM findings WHERE category = 'regulatory' ORDER BY id"
@@ -90,6 +84,7 @@ def run(apply: bool, limit: int | None = None) -> None:
 
 
 def main() -> None:
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Actually write changes (default: dry-run only)")
     parser.add_argument("--limit", type=int, default=None, help="Only process the first N rows")

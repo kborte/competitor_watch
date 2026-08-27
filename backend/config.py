@@ -1,8 +1,8 @@
-"""Backend configuration — env vars only, no framework config system needed at this scale.
+"""Backend configuration — env vars only, no framework config system at this scale.
 
-GEMINI_API_KEY is not read here; the Gemini SDK picks it up from the
-environment on its own. Both vars are expected in backend/.env (see
-backend/.env.example) — never commit the real file.
+Both required vars are expected in backend/.env (see backend/.env.example); never
+commit the real file. GEMINI_API_KEY is not read here — the Gemini SDK picks it
+up from the environment on its own.
 """
 
 import os

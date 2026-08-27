@@ -125,7 +125,7 @@ Seconds, and you get the exact previous container with its exact settings. Do no
 
 **Supabase free projects pause after ~7 days of no activity.** The daily crawl keeps it awake. If the backend starts erroring after a quiet stretch, un-pause it in the Supabase dashboard.
 
-**Schema changes are automatic.** `SCHEMA` in `backend/db.py` runs on every container start and every statement is idempotent. Add a column by appending `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and redeploying. Destructive changes (drop, rename, retype) cannot be expressed this way — run those by hand in the Supabase SQL Editor.
+**Schema changes are automatic.** `SCHEMA` in `backend/db.py` runs on every container start and every statement is idempotent. Add a column by appending `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and redeploying. A rename can also be automated, but only when guarded so it is a no-op once applied and on a fresh database — see the `changes` → `classifications` block in `SCHEMA` for the pattern (`to_regclass` checks both the old and new name, and the `CREATE TABLE` names only the new one, or it would recreate an empty table beside the renamed one). Genuinely destructive changes — dropping a column or table, retyping — still have to be run by hand in the Supabase SQL Editor.
 
 ## First-time setup, for reference
 

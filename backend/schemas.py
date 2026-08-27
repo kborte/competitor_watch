@@ -1,6 +1,10 @@
-"""Pydantic models — the JSON contract the routine and backend agree on
-(IngestPayload/Finding), plus the LLM's forced structured classification
-output (Classification)."""
+"""Pydantic models — the shapes this service validates against.
+
+Finding and IngestPayload are the JSON contract the crawler delivers; they are
+duplicated in research_crawler/schemas.py rather than shared, since the crawler is
+deployed separately and the two agree on a wire format, not on code.
+Classification is the structured output the classifier is forced to return.
+"""
 
 from datetime import date, datetime
 from typing import Literal, Optional
@@ -21,6 +25,8 @@ Tone = Literal["positive", "negative", "neutral", "mixed"]
 
 
 class Finding(BaseModel):
+    """One competitor development, as delivered by the crawler."""
+
     keyword: str
     company: str
     category: Category
@@ -44,6 +50,9 @@ class Finding(BaseModel):
 
 
 class IngestPayload(BaseModel):
+    """One delivery. The crawler sends a single finding per request, so a
+    partial crawl still lands everything it found before failing."""
+
     routine_run_id: str
     run_started_at: datetime
     run_completed_at: datetime
@@ -54,6 +63,8 @@ class IngestPayload(BaseModel):
 
 
 class Classification(BaseModel):
+    """One classifier verdict. Persisted to the classifications table."""
+
     category: Category
     materiality: Literal["low", "medium", "high"]
     confidence: float

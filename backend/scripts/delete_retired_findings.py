@@ -1,25 +1,10 @@
-"""One-off maintenance script: permanently delete every finding belonging to a
-retired competitor (companies.RETIRED_ALIASES), along with its audit chain.
+"""One-off: permanently delete every finding belonging to a retired competitor.
 
-    python3 -m backend.scripts.delete_retired_findings            # dry run
-    python3 -m backend.scripts.delete_retired_findings --apply    # writes
+Walks the audit chain inward-out (classifications -> llm_calls -> findings), then
+cleans up seen_urls rows and routine_runs left dangling. Deleting the runs is what
+makes this complete: their raw_payload is the only verbatim copy of the delivery.
 
-Deletion walks the foreign keys inward-out — changes -> llm_calls -> findings
-— then cleans up two things that would otherwise be left dangling:
-
-- seen_urls rows for URLs no surviving finding references. Left behind, a URL
-  stays in the dedup ledger, so if the market-wide keyword ever surfaces that
-  page again it would be judged a duplicate on first sighting and never
-  classified.
-- routine_runs that held only deleted findings. These are per-finding delivery
-  receipts, so a run whose one finding is gone is pure orphan. Runs that
-  legitimately carry zero findings (the keywords_with_no_findings markers) are
-  NOT touched: only runs identified from the deleted findings' own run_ids are
-  considered, never "any run with no findings".
-
-The raw payload in routine_runs.raw_payload is the only verbatim copy of what
-the crawler delivered, so removing those rows is what makes this deletion
-actually complete rather than leaving the data readable in JSON.
+    python3 -m backend.scripts.delete_retired_findings [--apply]
 """
 
 import argparse
@@ -28,6 +13,7 @@ from .. import companies, db
 
 
 def run(apply: bool) -> None:
+    """Reports, then optionally deletes, everything belonging to a retired company."""
     aliases = companies.retired_aliases()
     if not aliases:
         print("RETIRED_ALIASES is empty — nothing to delete.")
@@ -60,12 +46,12 @@ def run(apply: bool) -> None:
             n_calls = cur.fetchone()[0]
             cur.execute(
                 """
-                SELECT count(*) FROM changes
+                SELECT count(*) FROM classifications
                 WHERE llm_call_id IN (SELECT id FROM llm_calls WHERE finding_id = ANY(%s))
                 """,
                 (finding_ids,),
             )
-            n_changes = cur.fetchone()[0]
+            n_classifications = cur.fetchone()[0]
             # URLs that only these findings reference — anything shared with a
             # surviving finding must keep its ledger entry.
             cur.execute(
@@ -94,7 +80,7 @@ def run(apply: bool) -> None:
             n_runs = cur.fetchone()[0]
 
         print(f"  llm_calls to delete:       {n_calls}")
-        print(f"  changes to delete:         {n_changes}")
+        print(f"  classifications to delete: {n_classifications}")
         print(f"  seen_urls to delete:       {n_seen}")
         print(f"  routine_runs to delete:    {n_runs}  (of {len(run_ids)} referenced)")
 
@@ -105,12 +91,12 @@ def run(apply: bool) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                DELETE FROM changes
+                DELETE FROM classifications
                 WHERE llm_call_id IN (SELECT id FROM llm_calls WHERE finding_id = ANY(%s))
                 """,
                 (finding_ids,),
             )
-            deleted_changes = cur.rowcount
+            deleted_classifications = cur.rowcount
             cur.execute("DELETE FROM llm_calls WHERE finding_id = ANY(%s)", (finding_ids,))
             deleted_calls = cur.rowcount
             # seen_urls and routine_runs are resolved BEFORE the findings go,
@@ -140,15 +126,16 @@ def run(apply: bool) -> None:
             )
             deleted_runs = cur.rowcount
 
-        print(f"\n  deleted changes:      {deleted_changes}")
-        print(f"  deleted llm_calls:    {deleted_calls}")
-        print(f"  deleted seen_urls:    {deleted_seen}")
-        print(f"  deleted findings:     {deleted_findings}")
-        print(f"  deleted routine_runs: {deleted_runs}")
+        print(f"\n  deleted classifications: {deleted_classifications}")
+        print(f"  deleted llm_calls:       {deleted_calls}")
+        print(f"  deleted seen_urls:       {deleted_seen}")
+        print(f"  deleted findings:        {deleted_findings}")
+        print(f"  deleted routine_runs:    {deleted_runs}")
         print("\napplied.")
 
 
 def main() -> None:
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Actually write changes (default: dry-run)")
     args = parser.parse_args()

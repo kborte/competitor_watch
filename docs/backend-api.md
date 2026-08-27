@@ -36,8 +36,7 @@ Canonical names:
 
 ```
 Bupa Arabia · Tawuniya · ADNIC · Sukoon Insurance · Alkhaleej Takaful
-Beema · Doha Insurance · QIIC · Qatar General Insurance & Reinsurance
-Qatar Insurance Market
+Beema · Doha Insurance · QIIC · Qatar General · Qatar Insurance Market
 ```
 
 `Qatar Insurance Market` is a special bucket meaning "not any tracked competitor" — banks,
@@ -64,6 +63,16 @@ and excluded from `GET /findings` and `GET /companies` entirely. They surface on
 **`materiality` is null on duplicates.** Only findings that represent a genuinely new or
 changed content state get an LLM call, so re-sightings carry no materiality judgment. They
 are filtered out by default (`include_duplicates=false`).
+
+**`category` has two sources.** The crawler tags every finding; the backend classifier
+re-judges the tag on the subset it classifies. `category` is the classifier's verdict where
+one exists and the crawler's otherwise, and the `category=` filter matches that same
+resolved value, so a card's visible label always agrees with filtering on it. The two inputs
+are also returned separately as `crawler_category` and `classified_category`
+(`classified_category` is null on anything never classified). Time-window freshness is the
+one thing keyed to `crawler_category` instead — it is present on every row, and letting a
+retag move a finding between freshness rules would silently drop undated findings out of
+every window.
 
 ## Enumerations
 
@@ -103,9 +112,10 @@ List and filter findings. This is the main feed endpoint.
 `sort_by=materiality` ranks high → medium → low with recency as the tiebreak. The other two
 sort directly, with nulls last regardless of direction.
 
-Invalid values for `window`, `sort_by`, `sort_dir`, `line`, or `materiality` return **422**
-with the allowed set in the detail message. `company` and `category` are not validated — an
-unknown value simply matches nothing.
+Invalid values for `window`, `sort_by`, `sort_dir`, `line`, `materiality`, or `category`
+return **422**. These are declared as typed enumerations, so validation happens before the
+route runs and `detail` is FastAPI's standard array of field errors, not a single string.
+`company` is not validated — an unknown value simply matches nothing.
 
 **Example**
 
@@ -272,12 +282,15 @@ curl "$BASE/findings/412?view=summary"
   "tone": null,
   "source_location": null,
   "is_reference": false,
+  "crawler_category": "product",
+  "classified_category": "product",
   "has_snapshot": true,
   "change": {
     "materiality": "high",
     "confidence": 0.82,
     "evidence_quote": "Choose agency repair for repairs at the manufacturer's authorised workshop",
-    "rationale": "Agency repair is a premium differentiator in Qatari motor and directly competes on our comprehensive tier."
+    "rationale": "Agency repair is a premium differentiator in Qatari motor and directly competes on our comprehensive tier.",
+    "grounded": true
   },
   "llm_call": null
 }
@@ -293,6 +306,11 @@ With `view=full`, `llm_call` is populated instead:
   "called_at": "2026-08-10T05:12:46.902000+00:00"
 }
 ```
+
+`change.grounded` is the classifier's verdict on whether the excerpt actually supports the
+summary — `false` flags a finding whose summary overstates or misreads its source. It is
+`null` on findings classified before this was recorded, which means "not judged" rather than
+"judged unsupported".
 
 `change` and `llm_call` are both `null` on duplicates and on QIC reference findings — neither
 gets classified. `source_html` is never returned here; `has_snapshot` tells you whether it

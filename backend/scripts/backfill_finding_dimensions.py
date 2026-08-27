@@ -1,13 +1,9 @@
-"""Backfill line, tone, and source-location fields on pre-v4 findings.
+"""One-off: backfill line, tone and source_location on pre-v4 findings.
 
-Runs dry by default:
+Fills only fields that are missing, so rerunning is safe, and uses the same fixed
+taxonomy as the live crawler. Dry by default:
 
-    python3 -m backend.scripts.backfill_finding_dimensions
-    python3 -m backend.scripts.backfill_finding_dimensions --limit 10
-    python3 -m backend.scripts.backfill_finding_dimensions --apply
-
-The prompt uses the same fixed taxonomy as the live crawler. Existing fields
-are only filled when missing, so rerunning the script is safe.
+    python3 -m backend.scripts.backfill_finding_dimensions [--limit N] [--apply]
 """
 
 import argparse
@@ -25,6 +21,8 @@ MODEL = "gemini-3.6-flash"
 
 
 class Dimensions(BaseModel):
+    """The three fields this script infers, forced as structured output."""
+
     line: Line
     tone: Tone | None = None
     source_location: str | None = None
@@ -50,6 +48,7 @@ Page text: {page_text}
 
 
 def classify_dimensions(row: dict) -> Dimensions:
+    """Asks the model for one finding's line, tone and source location."""
     clean_text = extract_clean_text(row["source_html"])[:6000] if row["source_html"] else "(unavailable)"
     prompt = PROMPT.format(
         category=row["category"], title=row["title"], summary=row["summary"],
@@ -66,6 +65,7 @@ def classify_dimensions(row: dict) -> Dimensions:
 
 
 def run(apply: bool, limit: int | None = None) -> None:
+    """Walks findings missing any dimension and fills what it can."""
     with db.connect() as conn:
         with conn.cursor() as cur:
             query = """
@@ -101,6 +101,7 @@ def run(apply: bool, limit: int | None = None) -> None:
 
 
 def main() -> None:
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--limit", type=int, default=None)

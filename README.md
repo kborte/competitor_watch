@@ -19,8 +19,9 @@ GitHub Actions (daily 05:00 UTC)
             ▼
 Cloud Run: backend/             FastAPI
        ├─ dedup.py              seen-URL ledger — the only novelty decision
-       ├─ classify.py           one Gemini call: materiality, confidence, grounding
-       └─ db.py                 six tables, full audit chain
+       ├─ classify.py           one Gemini call: materiality, category, grounding
+       ├─ db.py                 six tables, full audit chain
+       └─ reads/                windows.py (freshness rule) + findings.py + stats.py
             │
             ▼
        Supabase Postgres
@@ -99,14 +100,16 @@ Frontend: see [frontend/README.md](frontend/README.md).
 ## What it tracks
 
 Nine competitors — Bupa Arabia, Tawuniya, ADNIC, Sukoon Insurance, Alkhaleej Takaful, Beema,
-Doha Insurance, QIIC, Qatar General Insurance & Reinsurance — plus a market-wide keyword and
-QIC itself as a benchmark reference. QIC findings are stored but excluded from the competitor
-feed.
+Doha Insurance, QIIC, Qatar General — plus a market-wide keyword and QIC itself as a benchmark
+reference. QIC findings are stored but excluded from the competitor feed.
 
-Adding or removing a competitor means editing two files, and they must agree exactly:
-`research_crawler/config.py` (`KEYWORDS`) and `backend/companies.py` (`REGISTRY`). Anything
-the crawler finds that isn't a registered competitor falls into the "Qatar Insurance Market"
-bucket rather than getting its own entity.
+Adding or removing a competitor means editing two files: `research_crawler/config.py`
+(`KEYWORDS`) and `backend/companies.py` (`REGISTRY`). Each keyword must appear as an alias of
+some registry entry — usually the canonical name itself, though "Qatar General" is searched
+under its longer legal form and listed as an alias instead. A keyword matching no alias
+silently lands in the "Qatar Insurance Market" bucket, as does anything the crawler finds
+that isn't a registered competitor. Add a matching logo key in `frontend/lib/companies.ts`
+too, or the dashboard falls back to an initials avatar.
 
 ## Operational notes
 
@@ -118,4 +121,6 @@ bucket rather than getting its own entity.
 - **Supabase free projects pause after ~7 days idle.** The daily crawl keeps it awake.
 - **Schema changes are additive and automatic.** Append an
   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` to `SCHEMA` in `backend/db.py` and redeploy.
-  Destructive changes have to be run by hand in the Supabase SQL editor.
+  Table renames can be automated too, if guarded to be a no-op once applied (see the
+  `classifications` block in `SCHEMA`). Dropping or retyping has to be run by hand in the
+  Supabase SQL editor.
