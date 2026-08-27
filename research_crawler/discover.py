@@ -1,8 +1,10 @@
-"""Step 1: grounded search. Gemini's google_search tool can't be combined
-with strict structured output in the same call, so this step just gathers
-raw material — a free-text research summary plus the real source URLs
-grounding cites — and structure.py turns that into clean Finding objects
-in a second call."""
+"""Step 1 of the crawl: grounded search, then verify what it cited.
+
+Gemini's google_search tool cannot be combined with strict structured output in
+one call, so this step only gathers raw material — a free-text research summary
+plus the real source URLs grounding cites — and independently fetches each cited
+page. structure.py turns that into clean Finding objects in a second call.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -27,6 +29,8 @@ than a general overview. If there's genuinely nothing recent, say so plainly."""
 
 @dataclass
 class ResolvedSource:
+    """One cited source, resolved to a real URL and fetched where possible."""
+
     domain_title: str
     resolved_url: str
     clean_text: str | None  # None if the independent fetch failed
@@ -39,12 +43,11 @@ class ResolvedSource:
 
 
 def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, list[ResolvedSource]]:
-    """Returns (free_text_summary, resolved_sources). time_range_days, when
-    set, scopes the grounded search to only the last N days via Gemini's
-    native time_range_filter — reduces how often an old article the
-    crawler only just discovered gets treated as fresh. (The other half of
-    that fix is the read API's published_at-based freshness filtering,
-    which catches whatever still slips through.)"""
+    """Searches for one keyword and resolves every source it cites.
+    Returns (free_text_summary, resolved_sources)."""
+    # Scoping the search to the last N days stops an old article the crawler
+    # only just discovered from reading as fresh. The read API's published_at
+    # freshness filtering catches whatever still slips through.
     search_kwargs = {}
     if time_range_days is not None:
         # Whole seconds only — the API rejects sub-second precision with

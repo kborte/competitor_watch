@@ -1,8 +1,10 @@
-"""Step 2: structure the raw discovery material into clean Finding
-objects. No search tool here, no novelty judgment — this call's only job
-is to read what discover.py already found and shape it correctly. It's
-told to quote source_excerpt verbatim from the fetched page text, not
-paraphrase, so grounding survives into the actual stored record."""
+"""Step 2 of the crawl: turn raw discovery material into clean Finding objects.
+
+No search tool here and no novelty judgment — this call only reads what
+discover.py already found and shapes it. The model is told to quote
+source_excerpt verbatim from the fetched page text rather than paraphrase, so the
+grounding survives into the stored record.
+"""
 
 from datetime import date, datetime, timezone
 
@@ -68,6 +70,7 @@ Report everything relevant, including routine items — do not filter for import
 
 
 def _format_sources(sources: list[ResolvedSource]) -> str:
+    """Renders each fetched source as a labelled block for the prompt."""
     blocks = []
     for s in sources:
         text = s.clean_text[:3000] if s.clean_text else "(fetch failed — no page text available)"
@@ -76,6 +79,8 @@ def _format_sources(sources: list[ResolvedSource]) -> str:
 
 
 def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> FindingsBatch:
+    """Turns one keyword's research summary and sources into findings, with the
+    fields the model cannot be trusted to infer filled in deterministically."""
     print(f"  [{keyword}] structuring into findings...", flush=True)
     prompt = PROMPT_TEMPLATE.format(keyword=keyword, summary=summary, sources=_format_sources(sources))
     response = client.models.generate_content(

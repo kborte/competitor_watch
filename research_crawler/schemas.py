@@ -1,6 +1,9 @@
-"""JSON contract shared with the backend's /ingest endpoint. Duplicated
-here rather than imported, since this crawler is deployed independently
-from the backend — the two agree on a wire format, not on code."""
+"""The JSON contract shared with the backend's /ingest endpoint.
+
+Duplicated in backend/schemas.py rather than imported: this crawler is deployed
+independently, so the two agree on a wire format, not on code. Any change here
+has to be made there too.
+"""
 
 from datetime import date, datetime
 from typing import Literal, Optional
@@ -21,6 +24,8 @@ Tone = Literal["positive", "negative", "neutral", "mixed"]
 
 
 class Finding(BaseModel):
+    """One competitor development, as delivered to the backend."""
+
     keyword: str
     company: str
     category: Category
@@ -44,12 +49,14 @@ class Finding(BaseModel):
 
 
 class FindingsBatch(BaseModel):
-    """Wrapper for structured output — Gemini's response_schema needs a
-    top-level object, not a bare list."""
+    """Wrapper for structured output — response_schema needs a top-level object,
+    not a bare list."""
     findings: list[Finding]
 
 
 class IngestPayload(BaseModel):
+    """One delivery to /ingest."""
+
     routine_run_id: str
     run_started_at: datetime
     run_completed_at: datetime

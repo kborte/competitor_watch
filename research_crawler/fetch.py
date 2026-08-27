@@ -1,8 +1,10 @@
-"""Fetch a page and reduce it to clean text — adapted from the original
-crawler's fetcher.py. Used here to independently verify a grounded search
-result against the live page, rather than trusting the model's paraphrase
-as the record. Also hangs onto the raw HTML so it can be stored as an
-auditable snapshot of what the page looked like at observation time."""
+"""Fetch a page and reduce it to clean text, plus whatever metadata it carries.
+
+Used to independently verify a grounded search result against the live page,
+rather than trusting the model's paraphrase as the record. Also keeps the raw
+HTML as an auditable snapshot of how the page looked at observation time, and
+extracts the publish date deterministically from markup the LLM never sees.
+"""
 
 import json
 import re
@@ -25,6 +27,8 @@ MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 
 @dataclass
 class FetchResult:
+    """One fetched page: where it really lives, and what could be read from it."""
+
     final_url: str
     raw_html: str | None  # None if the response wasn't HTML, or exceeded MAX_SNAPSHOT_BYTES
     clean_text: str | None  # None if the destination resolved but content couldn't be fetched (e.g. 403)
@@ -36,9 +40,9 @@ class FetchResult:
 
 
 def _valid(year: int, month: int, day: int) -> str | None:
-    """A publication date must be a real calendar date that has already
-    happened — a future one means we picked up an events listing or an
-    embargo stamp, not when the piece was published."""
+    """Validates a Y/M/D triple as a real, already-past calendar date."""
+    # A future date means we picked up an events listing or an embargo stamp,
+    # not when the piece was actually published.
     if not (2000 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31):
         return None
     try:
@@ -52,9 +56,8 @@ def _valid(year: int, month: int, day: int) -> str | None:
 
 
 def _date_only(raw: str) -> str | None:
-    """Normalizes the date formats that actually turn up in meta tags and
-    JSON-LD — ISO timestamps, slash-separated dates, and the two common
-    textual orderings — down to YYYY-MM-DD."""
+    """Normalizes the date formats that turn up in meta tags and JSON-LD —
+    ISO, slash-separated, and both textual orderings — to YYYY-MM-DD."""
     text = raw.strip()
     if not text:
         return None
@@ -107,9 +110,8 @@ _URL_DATE_PATTERNS = (
 
 
 def extract_date_from_url(url: str) -> str | None:
-    """Many news URLs embed the publish date in the path. Only accepts
-    plausible calendar values, so an arbitrary numeric slug can't be
-    misread as a date."""
+    """Pulls a publish date out of a URL path. Only accepts plausible calendar
+    values, so an arbitrary numeric slug can't be misread as a date."""
     for pattern in _URL_DATE_PATTERNS:
         match = pattern.search(url)
         if not match:
@@ -121,9 +123,9 @@ def extract_date_from_url(url: str) -> str | None:
 
 
 def _iter_jsonld_objects(data):
-    """Yields every dict nested anywhere in a parsed JSON-LD blob —
-    schema.org markup nests articles under @graph, arrays, mainEntity,
-    etc., and the date can sit at any depth."""
+    """Yields every dict nested anywhere in a parsed JSON-LD blob."""
+    # schema.org markup nests articles under @graph, arrays, mainEntity and
+    # more, so the date can sit at any depth.
     if isinstance(data, dict):
         yield data
         for value in data.values():
@@ -134,12 +136,11 @@ def _iter_jsonld_objects(data):
 
 
 def extract_published_date(html: str, url: str | None = None) -> str | None:
-    """Deterministically pulls a publish date (YYYY-MM-DD) from structured
-    markup — <meta> tags, JSON-LD, <time>, microdata, then the URL path —
-    rather than asking the LLM to guess from stripped-down body text, where
-    these dates never survive anyway (extract_clean_text() only reads
-    visible content tags and actively strips <script>, which is exactly
-    where JSON-LD lives)."""
+    """Pulls a publish date (YYYY-MM-DD) from structured markup, trying <meta>,
+    JSON-LD, microdata, <time>, then the URL path in that order of trust."""
+    # Deterministic rather than asking the LLM to guess from body text, where
+    # these dates never survive anyway: extract_clean_text() reads only visible
+    # content tags and strips <script>, which is exactly where JSON-LD lives.
     soup = BeautifulSoup(html, "html.parser")
 
     for prop in _META_DATE_PROPERTIES:
@@ -191,12 +192,12 @@ def extract_published_date(html: str, url: str | None = None) -> str | None:
 
 
 def extract_og_metadata(html: str) -> dict[str, str | None]:
-    """Pulls Open Graph (falling back to Twitter Card) meta tags for a
-    Messenger-style link-preview card — reuses the same fetched HTML
-    already in hand for source_html/clean_text, no extra network call."""
+    """Pulls Open Graph (falling back to Twitter Card) tags for a link-preview
+    card, reusing HTML already in hand rather than making another request."""
     soup = BeautifulSoup(html, "html.parser")
 
     def meta(*names: str) -> str | None:
+        """First non-empty content among these meta names, or None."""
         for name in names:
             tag = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
             content = tag.get("content") if tag else None
@@ -213,6 +214,8 @@ def extract_og_metadata(html: str) -> dict[str, str | None]:
 
 
 def extract_clean_text(html: str) -> str:
+    """Flattens HTML to one line of visible text per content element, dropping
+    scripts, styles and consecutive duplicates."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript", "iframe", "svg"]):
         tag.decompose()
@@ -227,13 +230,11 @@ def extract_clean_text(html: str) -> str:
 
 
 def fetch_page(url: str, timeout: int = 15) -> FetchResult | None:
-    """Returns FetchResult(final_url, raw_html, clean_text), or None only
-    when the destination couldn't be resolved at all (DNS/timeout/connection
-    error) — there's no final_url to report in that case. A request that
-    resolves (redirects followed) but comes back with a bad status (403,
-    404, ...) still returns a FetchResult with the real resolved final_url,
-    just with raw_html/clean_text left None — the caller can still cite the
-    real page, it just can't independently verify its content."""
+    """Fetches one URL. Returns None only when the destination could not be
+    resolved at all, since there is no real URL to report in that case."""
+    # A request that resolves but returns a bad status (403, 404, ...) still
+    # yields a FetchResult carrying the real final_url with no content: the
+    # caller can cite the page, it just cannot verify what it says.
     try:
         resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
     except requests.RequestException:
