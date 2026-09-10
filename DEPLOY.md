@@ -48,8 +48,16 @@ git status --porcelain     # must print nothing that belongs in the image
 ## Step 3. Build
 
 ```bash
-gcloud builds submit --tag me-central1-docker.pkg.dev/qic-ai-interns/eip/competitor-watch-backend:latest . --region=global --async
+COMMIT=$(git rev-parse --short HEAD)
+gcloud builds submit \
+  --tag me-central1-docker.pkg.dev/qic-ai-interns/eip/competitor-watch-backend:$COMMIT \
+  . --region=global --async
 ```
+
+Tag by commit, not `:latest`. With a moving tag you cannot tell which code a
+running container holds, so "is the fix deployed?" becomes unanswerable and a
+rollback target has to be guessed. Push `:latest` alongside it only if something
+still depends on that name.
 
 About two minutes. `--async` because this account cannot stream build logs — without it gcloud errors out even though the build succeeds.
 
@@ -61,13 +69,14 @@ gcloud builds list --region=global --limit=1 --format='value(status)'   # want S
 
 - the image lives in the `eip` repo because this account cannot create Artifact Registry repos
 - `eip-api` and `eip-web` are your teammate's images in the same repo. Never build to those two names.
-- only ever tagged `:latest`, so you cannot tell from Artifact Registry which commit is live. Rollback still works (step 6).
+- tagged by commit SHA, so Artifact Registry tells you exactly what is live and a rollback target is a fact rather than a guess
 
 ## Step 4. Deploy
 
 ```bash
+COMMIT=$(git rev-parse --short HEAD)
 gcloud run deploy competitor-watch-backend --region=me-central1 \
-  --image=me-central1-docker.pkg.dev/qic-ai-interns/eip/competitor-watch-backend:latest
+  --image=me-central1-docker.pkg.dev/qic-ai-interns/eip/competitor-watch-backend:$COMMIT
 ```
 
 Pass `--image` and nothing else. Secrets, scaling, port and auth all carry over from the last revision.
@@ -78,24 +87,29 @@ Pass `--image` and nothing else. Secrets, scaling, port and auth all carry over 
 
 ```bash
 gcloud run services update competitor-watch-backend --region=me-central1 \
-  --update-env-vars=FRONTEND_ORIGINS=https://your-frontend-url
+  --update-env-vars=SNAPSHOT_RETENTION_DAYS=90
 ```
 
 About 30 seconds, no build.
 
-To change a secret's value, add a new version in Secret Manager and redeploy — the service pins `:latest`, but a running revision keeps the version it started with.
+To change a secret's value, add a new version in Secret Manager and redeploy — a running revision keeps the secret version it started with, so it needs a redeploy to pick up a new one.
 
 ## Step 5. Smoke test
 
 ```bash
 URL=$(gcloud run services describe competitor-watch-backend --region=me-central1 --format='value(status.url)')
 
-curl -s $URL/crawl-status                  # process started AND reached Supabase
+curl -s $URL/healthz                       # process is up and serving
+curl -s $URL/readyz                        # ...and can reach the database
+curl -s $URL/crawl-status                  # last delivery timestamp
 curl -s "$URL/findings?window=all&limit=1" # read path works, data is there
 curl -s "$URL/stats?window=week"           # aggregation works
 ```
 
-Run all three.
+Run all five. `/healthz` and `/readyz` are the k8s probe endpoints: liveness
+deliberately touches nothing, so a database blip cannot restart the pod, while
+readiness fails with 503 when the database is unreachable so the pod leaves the
+load-balancer rotation instead.
 
 - `/crawl-status` is the one that matters most. `db.init_db()` runs at import in `backend/main.py`, so any response at all proves the container booted *and* connected to Supabase. A bad `DATABASE_URL` is a startup crash, not a 500.
 - `/findings` returning `[]` after a crawl means ingestion is broken, not that there is no news.
@@ -121,7 +135,7 @@ Seconds, and you get the exact previous container with its exact settings. Do no
 
 **`WEBHOOK_SECRET` must match in two places** — Secret Manager and the GitHub repo secret. A mismatch is a 401 on every ingest, which shows up as `N failed` and nothing else.
 
-**The browser cannot read the API until `FRONTEND_ORIGINS` is set.** `backend/main.py` only adds the CORS middleware if that variable is non-empty, so with it unset every request from the dashboard fails while `curl` works fine. Set it with step 4b once the frontend has a URL. Origin only: scheme and host, no trailing slash.
+**There is no CORS configuration any more.** The dashboard and the API are served from one origin behind a shared Ingress — dashboard at `/`, API at `/api` — so browser requests are same-origin and never preflight. `FRONTEND_ORIGINS` is gone; setting it does nothing. The frontend's `NEXT_PUBLIC_API_BASE_URL` is the relative prefix `/api`, which is what lets one image serve every environment.
 
 **Supabase free projects pause after ~7 days of no activity.** The daily crawl keeps it awake. If the backend starts erroring after a quiet stretch, un-pause it in the Supabase dashboard.
 

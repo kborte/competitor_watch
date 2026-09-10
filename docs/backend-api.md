@@ -6,9 +6,11 @@ Base URL:
 https://competitor-watch-backend-407920901425.me-central1.run.app
 ```
 
-The read endpoints (`GET`) have **no authentication**. Access is scoped only by CORS to the
-origins in `FRONTEND_ORIGINS`, which is hygiene against arbitrary sites reading the data
-client-side, not a security boundary. `curl` and server-side code can call them freely.
+The read endpoints (`GET`) have **no authentication**, by decision rather than oversight.
+The dashboard and the API share one origin behind a shared Ingress (dashboard at `/`, API at
+`/api`), and access control lives at the Ingress: `/ingest` is not exposed there at all, and
+the crawler reaches it over internal cluster DNS. Anything that can route to the service can
+read the data, so do not put the API on a public hostname without a gateway in front.
 
 The write endpoint (`POST /ingest`) requires a bearer secret.
 
@@ -354,6 +356,18 @@ findings are excluded entirely.
 
 A company with zero findings does not appear in the list at all.
 
+## `GET /healthz` and `GET /readyz`
+
+Kubernetes probes.
+
+| Endpoint | Touches the database | Meaning of failure |
+|---|---|---|
+| `/healthz` | No | The process is wedged — restart it |
+| `/readyz` | Yes (`SELECT 1`) | The database is unreachable — take the pod out of rotation, but do not restart it |
+
+`/healthz` deliberately depends on nothing, so a database blip cannot become a restart loop
+across every pod at once. `/readyz` returns **503** when the database is unreachable.
+
 ## `GET /crawl-status`
 
 ```bash
@@ -467,5 +481,5 @@ shows re-sightings, useful for confirming the dedup ledger is behaving.
   missing from `week`, check its `published_at`.
 - **`materiality` filtering excludes duplicates implicitly**, since duplicates have no
   materiality at all.
-- **CORS is off entirely when `FRONTEND_ORIGINS` is unset.** The middleware is only added if
-  the variable is non-empty, so browser calls fail while `curl` works. See `DEPLOY.md`.
+- **There is no CORS middleware.** Requests are same-origin behind the Ingress, so they never
+  preflight; the browser and `curl` behave identically.
