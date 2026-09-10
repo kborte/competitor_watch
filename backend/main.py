@@ -11,7 +11,6 @@ Run locally:
 
 import hmac
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -24,7 +23,7 @@ from . import ingest as ingest_logic
 from .schemas import Category, IngestPayload, Line
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=config.LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 log = logging.getLogger(__name__)

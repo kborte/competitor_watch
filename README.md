@@ -76,19 +76,23 @@ Backend:
 
 ```bash
 pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env      # fill in DATABASE_URL, WEBHOOK_SECRET, GEMINI_API_KEY
+cp .env.example .env      # one file for every component; fill in the three secrets
 uvicorn backend.main:app --reload --port 8000
 ```
+
+Every variable lives in one root `.env` (see `.env.example`, which documents all
+of them). In a container that file is absent and the platform supplies the
+environment instead, which needs no code change: `load_dotenv()` no-ops on a
+missing file and never overrides a variable that is already set.
 
 The schema creates itself on startup — `db.init_db()` runs the idempotent DDL in
 `backend/db.py` every time the app boots. Point `DATABASE_URL` at the production Supabase
 database and you are reading live data; point it at a local Postgres for a clean slate.
 
-Crawler:
+Crawler — same `.env`, no separate setup:
 
 ```bash
 pip install -r research_crawler/requirements.txt
-cp research_crawler/.env.example research_crawler/.env   # BACKEND_INGEST_URL, WEBHOOK_SECRET, GEMINI_API_KEY
 python -m research_crawler.crawler
 ```
 

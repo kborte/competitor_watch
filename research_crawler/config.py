@@ -1,16 +1,18 @@
 """Crawler configuration — env vars and the keyword list.
 
-Deployed independently from the backend, so this reads its own .env, not the
-backend's. KEYWORDS is the list the crawl iterates: one grounded search per
-entry. GEMINI_API_KEY is not read here — the Gemini SDK picks it up from the
-environment on its own.
+Reads the repo-root .env (see .env.example), the same file the backend reads;
+the two are deployed separately but configured from one place. In a container
+that file is absent and the platform supplies the environment directly.
+KEYWORDS is the list the crawl iterates: one grounded search per entry.
+GEMINI_API_KEY is not read here — the SDK picks it up from the environment.
 """
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 BACKEND_INGEST_URL = os.environ["BACKEND_INGEST_URL"]  # e.g. http://localhost:8123/ingest
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
@@ -46,7 +48,7 @@ KEYWORDS = [
     QIC_REFERENCE_KEYWORD,
 ]
 
-MODEL = "gemini-3.6-flash"
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 # Scopes the grounded search to the last N days — a daily cron with an
 # unbounded search kept resurfacing old articles it had simply never
@@ -76,11 +78,18 @@ MAX_SUMMARY_CHARS = int(os.environ.get("MAX_SUMMARY_CHARS", "12000"))
 # Findings accepted from one keyword, and from one whole run. A ceiling turns a
 # runaway keyword into a logged, bounded event instead of an unbounded bill.
 MAX_FINDINGS_PER_KEYWORD = int(os.environ.get("MAX_FINDINGS_PER_KEYWORD", "20"))
-MAX_FINDINGS_PER_RUN = int(os.environ.get("MAX_FINDINGS_PER_RUN", "200"))
+MAX_FINDINGS_PER_CRAWL = int(os.environ.get("MAX_FINDINGS_PER_CRAWL", "200"))
 
-# Kill switch: set CRAWL_DISABLED=1 to stop the crawl without editing or
-# disabling the workflow. Checked before any paid call is made.
-CRAWL_DISABLED = os.environ.get("CRAWL_DISABLED", "").strip().lower() in {"1", "true", "yes"}
+# Uppercased because logging rejects a lowercase level name outright
+# (ValueError: Unknown level: 'debug'), which would be a crash on boot.
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+# Kill switch, checked before any paid call is made. Stated positively so the
+# variable reads the way it behaves — an inverted boolean is the kind of thing
+# that gets set to "false" in an emergency and quietly keeps running.
+CRAWL_ENABLED = os.environ.get("CRAWL_ENABLED", "true").strip().lower() not in {
+    "0", "false", "no", "off",
+}
 
 # Pages are fetched concurrently. Serial fetching at 15s each meant 20 sources
 # alone could exhaust the 300s per-company budget before structuring began.
@@ -102,8 +111,8 @@ STRUCTURE_THINKING_BUDGET = int(os.environ.get("STRUCTURE_THINKING_BUDGET", "0")
 
 # Retry only transient statuses, only a few times. Exhausting them is not data
 # loss: the next daily crawl re-reports everything it can still see.
-LLM_MAX_ATTEMPTS = int(os.environ.get("LLM_MAX_ATTEMPTS", "3"))
-LLM_BACKOFF_SECONDS = float(os.environ.get("LLM_BACKOFF_SECONDS", "2"))
+GEMINI_MAX_ATTEMPTS = int(os.environ.get("GEMINI_MAX_ATTEMPTS", "3"))
+GEMINI_BACKOFF_SECONDS = float(os.environ.get("GEMINI_BACKOFF_SECONDS", "2"))
 
 # Delivery timeout. Comfortably above the backend's own classification budget
 # (45s) so the client stops waiting only when something is genuinely wrong,

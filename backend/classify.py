@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 client = genai.Client()  # reads GEMINI_API_KEY from the environment
 
-MODEL = "gemini-3.6-flash"
+MODEL = config.GEMINI_MODEL
 
 # Statuses worth another attempt: rate limiting and transient unavailability.
 # Everything else — a bad key, a malformed request — fails the same way on every
@@ -98,20 +98,20 @@ def _generate(prompt: str):
         http_options=types.HttpOptions(timeout=config.CLASSIFY_TIMEOUT_MS),
     )
     last: Exception | None = None
-    for attempt in range(1, config.LLM_MAX_ATTEMPTS + 1):
+    for attempt in range(1, config.GEMINI_MAX_ATTEMPTS + 1):
         try:
             return client.models.generate_content(
                 model=MODEL, contents=prompt, config=request_config,
             )
         except Exception as exc:
             status = _status_of(exc)
-            if status not in _RETRYABLE_STATUSES or attempt == config.LLM_MAX_ATTEMPTS:
+            if status not in _RETRYABLE_STATUSES or attempt == config.GEMINI_MAX_ATTEMPTS:
                 raise
             last = exc
-            delay = config.LLM_BACKOFF_SECONDS * attempt
+            delay = config.GEMINI_BACKOFF_SECONDS * attempt
             log.warning(
                 "classify attempt %d/%d failed with %s, retrying in %.1fs",
-                attempt, config.LLM_MAX_ATTEMPTS, status, delay,
+                attempt, config.GEMINI_MAX_ATTEMPTS, status, delay,
             )
             time.sleep(delay)
     raise last  # unreachable: the loop either returns or raises

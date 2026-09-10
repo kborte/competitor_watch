@@ -12,12 +12,12 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-from .. import db
+from .. import config, db
 from ..htmlutil import extract_clean_text
 from ..schemas import Line, Tone
 
 client = genai.Client()
-MODEL = "gemini-3.6-flash"
+MODEL = config.GEMINI_MODEL
 
 
 class Dimensions(BaseModel):

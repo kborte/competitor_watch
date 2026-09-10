@@ -15,14 +15,14 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-from .. import db
+from .. import config, db
 from ..reads.windows import CRAWL_RECENCY_CATEGORIES
 from ..schemas import Category
 
 log = logging.getLogger("reclassify_regulatory")
 
 client = genai.Client()
-MODEL = "gemini-3.6-flash"
+MODEL = config.GEMINI_MODEL
 
 PROMPT_TEMPLATE = """A competitor-watch finding was tagged "regulatory" under an old, looser \
 category scheme. Re-classify it under the current taxonomy:

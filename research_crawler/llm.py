@@ -45,20 +45,20 @@ def usage_of(response) -> dict:
 def generate(client, *, model: str, contents: str, request_config, label: str):
     """Calls the model, retrying only transient failures with linear backoff."""
     last: Exception | None = None
-    for attempt in range(1, config.LLM_MAX_ATTEMPTS + 1):
+    for attempt in range(1, config.GEMINI_MAX_ATTEMPTS + 1):
         try:
             return client.models.generate_content(
                 model=model, contents=contents, config=request_config,
             )
         except Exception as exc:
             status = status_of(exc)
-            if status not in RETRYABLE_STATUSES or attempt == config.LLM_MAX_ATTEMPTS:
+            if status not in RETRYABLE_STATUSES or attempt == config.GEMINI_MAX_ATTEMPTS:
                 raise
             last = exc
-            delay = config.LLM_BACKOFF_SECONDS * attempt
+            delay = config.GEMINI_BACKOFF_SECONDS * attempt
             log.warning(
                 "[%s] attempt %d/%d failed with %s, retrying in %.1fs",
-                label, attempt, config.LLM_MAX_ATTEMPTS, status, delay,
+                label, attempt, config.GEMINI_MAX_ATTEMPTS, status, delay,
             )
             time.sleep(delay)
     raise last  # unreachable: the loop either returns or raises

@@ -12,7 +12,7 @@ API — nothing in this app is shared with it beyond the API contract.
 
 ```bash
 npm install
-cp .env.local.example .env.local   # point NEXT_PUBLIC_API_BASE_URL at your backend
+# NEXT_PUBLIC_API_BASE_URL comes from the repo-root .env (see ../.env.example)
 npm run dev
 ```
 

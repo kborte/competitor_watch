@@ -10,13 +10,12 @@ ability to re-render that page as it looked. Run daily as a CronJob.
 
 import argparse
 import logging
-import os
 
-from .. import db
+from .. import config, db
 
 log = logging.getLogger("prune_snapshots")
 
-DEFAULT_RETENTION_DAYS = int(os.environ.get("SNAPSHOT_RETENTION_DAYS", "90"))
+DEFAULT_RETENTION_DAYS = config.SNAPSHOT_RETENTION_DAYS
 
 
 def run(apply: bool, days: int) -> None:

@@ -342,19 +342,38 @@ Market" bucket.
 
 ### Configuration
 
+One `.env` at the repo root configures every component; `.env.example` is the
+committed template and documents all of them. The same file is the source for the
+cluster objects (`kubectl create secret/configmap --from-env-file=.env`).
+
 | Variable | Backend | Crawler | Notes |
 | --- | --- | --- | --- |
-| `GEMINI_API_KEY` | ✅ | ✅ | Read by the SDK from the environment |
-| `DATABASE_URL` | ✅ | — | Supabase connection string. A bad value is a startup crash, not a 500. |
-| `WEBHOOK_SECRET` | ✅ | ✅ | **Must match in both places** — a mismatch is a 401 on every delivery and looks like "no news today" |
-| `SNAPSHOT_RETENTION_DAYS` | ✅ | — | Age at which archived page HTML is cleared (default 90). The finding and its audit chain stay. |
-| `CRAWL_DISABLED` | — | ✅ | Kill switch. Set to `1` to stop the crawl without editing the workflow. |
-| `BACKEND_INGEST_URL` | — | ✅ | Must be updated if the Cloud Run URL changes |
-| `SEARCH_WINDOW_DAYS` | — | ✅ | 3 daily, 30 for the monthly backfill, 365 for a first-time backfill |
+| `POSTGRES_PASSWORD` | ✅ | — | Secret. Used to assemble `DATABASE_URL` when that is not set explicitly |
+| `WEBHOOK_SECRET` | ✅ | ✅ | **Must match on both** — a mismatch is a 401, and the crawler now aborts the run rather than logging quiet failures |
+| `GEMINI_API_KEY` | ✅ | ✅ | Read by the SDK, not by our config |
+| `DATABASE_URL` | ✅ | — | Verbatim when set; otherwise built from the `POSTGRES_*` parts |
+| `BACKEND_INGEST_URL` | — | ✅ | Cluster-internal DNS — `/ingest` is not exposed through the Ingress |
+| `NEXT_PUBLIC_API_BASE_URL` | — | — | `/api`. **Build-time only** — Next inlines it, so setting it in the pod has no effect |
+| `CRAWL_ENABLED` | — | ✅ | Kill switch. `false` stops the crawl before any paid call |
+| `SEARCH_WINDOW_DAYS` | — | ✅ | 3 daily, 30 monthly, 365 for a first run |
+| `GEMINI_MODEL` | ✅ | ✅ | One model for all three call sites |
+| `SNAPSHOT_RETENTION_DAYS` | ✅ | — | Age at which archived page HTML is cleared (default 90) |
+| `LOG_LEVEL` | ✅ | ✅ | Case-insensitive |
 
-Backend secrets live in Google Secret Manager; crawler secrets are GitHub repository secrets.
+Per-call limits are set separately for the three model calls, because they do
+different work: `DISCOVER_*` (web search — needs reasoning and the longest
+timeout), `STRUCTURE_*` (schema shaping — most output tokens, no reasoning), and
+`CLASSIFY_*` (one short verdict — the strictest timeout, since it runs inside a
+request the crawler is waiting on). Crawl ceilings — `MAX_SOURCES_PER_KEYWORD`,
+`MAX_SUMMARY_CHARS`, `MAX_FINDINGS_PER_KEYWORD`, `MAX_FINDINGS_PER_CRAWL`,
+`FETCH_CONCURRENCY` — bound one run's cost.
 
----
+> The file contains no `${VAR}` references by design. python-dotenv expands them,
+> but `kubectl --from-env-file` and `docker compose env_file:` copy values
+> literally, so one file would mean two different things depending on who read
+> it. Nor are there comments on a variable's own line: `KEY=   # hint` parses as
+> the value `"# hint"` rather than as empty, which would start the app with a
+> hint as its password.
 
 ## 7. Known limitations
 

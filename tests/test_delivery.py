@@ -105,10 +105,24 @@ class TestDeliveryTimeout:
 
 class TestKillSwitch:
     def test_disabled_crawl_makes_no_calls_and_exits_clean(self, monkeypatch):
-        monkeypatch.setattr(crawler.config, "CRAWL_DISABLED", True)
+        monkeypatch.setattr(crawler.config, "CRAWL_ENABLED", False)
         with patch.object(crawler, "_run_company") as ran:
             assert crawler.run() == 0
         ran.assert_not_called()
+
+    @pytest.mark.parametrize("value,expected", [
+        ("true", True), ("TRUE", True), ("yes", True), ("1", True), ("", True),
+        ("false", False), ("False", False), ("no", False), ("0", False), ("off", False),
+    ])
+    def test_kill_switch_parsing(self, value, expected, monkeypatch):
+        # Stated positively so the variable reads the way it behaves; the unset
+        # and empty cases must both mean "enabled", or a missing variable would
+        # silently stop the crawl.
+        monkeypatch.setenv("CRAWL_ENABLED", value)
+        import importlib
+
+        from research_crawler import config as crawler_config
+        assert importlib.reload(crawler_config).CRAWL_ENABLED is expected
 
 
 class TestRunCaps:
@@ -116,5 +130,5 @@ class TestRunCaps:
         cfg = crawler.config
         assert cfg.MAX_SOURCES_PER_KEYWORD > 0
         assert cfg.MAX_FINDINGS_PER_KEYWORD > 0
-        assert cfg.MAX_FINDINGS_PER_RUN >= cfg.MAX_FINDINGS_PER_KEYWORD
+        assert cfg.MAX_FINDINGS_PER_CRAWL >= cfg.MAX_FINDINGS_PER_KEYWORD
         assert cfg.MAX_SUMMARY_CHARS > 0

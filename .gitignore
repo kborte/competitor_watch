@@ -1,10 +1,14 @@
 __pycache__/
 *.pyc
+.DS_Store
+
+# One .env at the repo root now configures every component; .env.example is the
+# committed template. The old per-package files are gone.
+.env
 backend/.env
 research_crawler/.env
-ai-intern-key.json
+
 *-key.json
-.DS_Store
 
 # Internal review response — working notes, not part of the project docs.
 docs/code-review-response.md

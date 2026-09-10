@@ -40,7 +40,7 @@ def finding():
 
 @pytest.fixture(autouse=True)
 def fast_backoff(monkeypatch):
-    monkeypatch.setattr(config, "LLM_BACKOFF_SECONDS", 0.001)
+    monkeypatch.setattr(config, "GEMINI_BACKOFF_SECONDS", 0.001)
 
 
 class TestRetryPolicy:
@@ -83,7 +83,7 @@ class TestRetryPolicy:
         with patch.object(classify.client.models, "generate_content", side_effect=always):
             with pytest.raises(SdkError):
                 classify.classify(finding)
-        assert len(attempts) == config.LLM_MAX_ATTEMPTS
+        assert len(attempts) == config.GEMINI_MAX_ATTEMPTS
 
 
 class TestNoneResponse:

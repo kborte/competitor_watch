@@ -8,7 +8,6 @@ relevant finding is reported every run, and the backend's ledger decides what's 
 """
 
 import logging
-import os
 import queue
 import sys
 import threading
@@ -24,7 +23,7 @@ from .schemas import IngestPayload
 from .structure import structure
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=config.LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
     stream=sys.stdout,
 )
@@ -139,10 +138,10 @@ def _envelope(crawl_id: str, seq: int, keyword: str, findings: list, no_findings
 def run() -> int:
     """Crawls every configured keyword in turn, delivering as it goes.
     Returns a process exit code: non-zero when the run needs attention."""
-    if config.CRAWL_DISABLED:
+    if not config.CRAWL_ENABLED:
         # Kill switch, checked before any paid call: lets someone stop the crawl
         # without editing the workflow or revoking a key.
-        log.warning("CRAWL_DISABLED is set — exiting without making any calls")
+        log.warning("CRAWL_ENABLED is false — exiting without making any calls")
         return 0
 
     crawl_id = str(uuid.uuid4())
@@ -155,7 +154,7 @@ def run() -> int:
     log.info("crawl %s starting — %d keywords, %ds budget per company, "
              "search window: last %dd, run cap %d findings",
              crawl_id, total, PER_COMPANY_TIMEOUT_SECONDS, config.SEARCH_WINDOW_DAYS,
-             config.MAX_FINDINGS_PER_RUN)
+             config.MAX_FINDINGS_PER_CRAWL)
 
     def record(result: Delivery) -> None:
         nonlocal delivered, failed, classify_errors
@@ -193,11 +192,11 @@ def run() -> int:
             for finding in batch.findings:
                 # Run-wide ceiling. Without it, a bad search day multiplies into
                 # an unbounded number of paid classification calls downstream.
-                if findings_delivered >= config.MAX_FINDINGS_PER_RUN:
+                if findings_delivered >= config.MAX_FINDINGS_PER_CRAWL:
                     capped = True
                     log.error("run cap of %d findings reached — abandoning the rest of "
                               "the crawl (%d keywords unprocessed)",
-                              config.MAX_FINDINGS_PER_RUN, total - i + 1)
+                              config.MAX_FINDINGS_PER_CRAWL, total - i + 1)
                     break
                 seq += 1
                 result = deliver(_envelope(crawl_id, seq, keyword, [finding], no_findings=False))

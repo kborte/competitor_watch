@@ -133,7 +133,16 @@ Seconds, and you get the exact previous container with its exact settings. Do no
 
 **A green GitHub Actions run does not mean data landed.** `deliver()` in `research_crawler/crawler.py` catches delivery failures and the process still exits 0. Check the last log line: `crawl <id> complete — N delivered, N failed`.
 
-**`WEBHOOK_SECRET` must match in two places** — Secret Manager and the GitHub repo secret. A mismatch is a 401 on every ingest, which shows up as `N failed` and nothing else.
+**`WEBHOOK_SECRET` must match in two places** — Secret Manager and the GitHub repo secret. A mismatch is a 401 on every ingest. The crawler now aborts the whole run on a 401 rather than logging 200 quiet failures, so this shows up immediately instead of looking like a slow news day.
+
+**All configuration lives in one root `.env`** (template: `.env.example`). It is the source for both local development and the cluster objects:
+
+```bash
+kubectl create secret generic cw-secrets --from-env-file=.env
+kubectl create configmap  cw-config     --from-env-file=.env
+```
+
+The file is deliberately flat — no `${VAR}` references. python-dotenv would expand them, but `kubectl --from-env-file` copies values literally, so `DATABASE_URL=postgresql://${POSTGRES_USER}:...` would reach the app as those characters. `DATABASE_URL` is assembled in `backend/config.py` from the `POSTGRES_*` parts when it is not set explicitly, which behaves identically under dotenv, `envFrom` and Compose. For the same reason there are no comments on a variable's own line: `KEY=   # hint` parses as the value `"# hint"`, not as empty.
 
 **There is no CORS configuration any more.** The dashboard and the API are served from one origin behind a shared Ingress — dashboard at `/`, API at `/api` — so browser requests are same-origin and never preflight. `FRONTEND_ORIGINS` is gone; setting it does nothing. The frontend's `NEXT_PUBLIC_API_BASE_URL` is the relative prefix `/api`, which is what lets one image serve every environment.
 
