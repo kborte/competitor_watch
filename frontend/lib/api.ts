@@ -19,14 +19,36 @@ if (!BASE_URL) {
   throw new Error("NEXT_PUBLIC_API_BASE_URL is not set");
 }
 
-async function getJson<T>(path: string, params?: object): Promise<T> {
-  const url = new URL(path, BASE_URL);
+// Trailing slashes trimmed once, so "/api" and "/api/" behave identically.
+const API_ROOT = BASE_URL.replace(/\/+$/, "");
+
+/**
+ * Joins the API root and a path by concatenation, deliberately not via
+ * `new URL(path, base)`.
+ *
+ * `new URL()` resolves an absolute path against the base's *origin* and throws
+ * the base's own path away: `new URL("/findings", "https://host/api")` yields
+ * "https://host/findings" — the "/api" prefix silently vanishes. A relative
+ * base is rejected outright, so `NEXT_PUBLIC_API_BASE_URL="/api"` would throw
+ * a TypeError at the first request.
+ *
+ * A relative root is what lets one image serve every environment: the
+ * dashboard and the API share an origin behind the Ingress, so the browser
+ * resolves "/api/findings" against whatever domain the page was served from.
+ */
+function apiUrl(path: string, params?: object): string {
+  const query = new URLSearchParams();
   if (params) {
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) url.searchParams.set(key, String(value));
+      if (value !== undefined) query.set(key, String(value));
     }
   }
-  const res = await fetch(url);
+  const suffix = query.toString();
+  return `${API_ROOT}${path}${suffix ? `?${suffix}` : ""}`;
+}
+
+async function getJson<T>(path: string, params?: object): Promise<T> {
+  const res = await fetch(apiUrl(path, params));
   if (!res.ok) {
     throw new Error(`${path} failed: ${res.status} ${await res.text()}`);
   }
@@ -55,7 +77,7 @@ export function getFinding(id: number, view: View = "full"): Promise<FindingDeta
 }
 
 export function getSnapshotUrl(id: number): string {
-  return new URL(`/findings/${id}/snapshot`, BASE_URL).toString();
+  return apiUrl(`/findings/${id}/snapshot`);
 }
 
 export function listCompanies(): Promise<Company[]> {

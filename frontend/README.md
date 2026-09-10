@@ -17,8 +17,9 @@ npm run dev
 ```
 
 Requires the backend (`../backend`) running and reachable at
-`NEXT_PUBLIC_API_BASE_URL`, with `FRONTEND_ORIGINS` on the backend including
-`http://localhost:3000`.
+`NEXT_PUBLIC_API_BASE_URL`. Locally that is an absolute URL
+(`http://localhost:8000`), because the two run on different ports; in the
+cluster it is the relative prefix `/api`, since both are served from one origin.
 
 ## Structure
 
@@ -26,6 +27,7 @@ Requires the backend (`../backend`) running and reachable at
 - `components/` — sticky header and filters, KPI/attention panels, grouped feed, and the
   evidence/detail panel with the existing snapshot and audit disclosures.
 - `lib/api.ts` — typed fetch wrappers for every backend endpoint.
+- `lib/api.test.ts` — URL-building tests (`npm test`, Node's built-in runner).
 - `lib/types.ts` — TypeScript interfaces mirroring the API's response shapes.
 - `lib/time.ts` — fixed UTC+3 (Qatar, no DST) formatting, matching the backend's own window math.
 
@@ -33,13 +35,17 @@ Requires the backend (`../backend`) running and reachable at
 
 Vercel, zero-config. Live at https://competitor-watch-qic.vercel.app.
 
-Two settings, on both sides:
+One setting: `NEXT_PUBLIC_API_BASE_URL`. It is inlined at build time, so
+**redeploy after changing it** — setting the variable alone does nothing.
 
-1. `NEXT_PUBLIC_API_BASE_URL` in the Vercel project's environment variables, pointed at
-   https://competitor-watch-backend-407920901425.me-central1.run.app. It's inlined at build
-   time, so **redeploy after changing it** — setting the variable alone does nothing.
-2. `FRONTEND_ORIGINS` on the backend must include this app's origin, or every request fails
-   CORS while `curl` keeps working. See [`../DEPLOY.md`](../DEPLOY.md) step 4b.
+In the cluster, set it to `/api`. The dashboard and the API share one origin
+behind the Ingress (dashboard at `/`, API at `/api`), which means:
 
-Preview deployments get their own `*.vercel.app` hostnames, which aren't in
-`FRONTEND_ORIGINS` — so previews fail CORS unless you add them (it splits on commas).
+- No CORS configuration on either side. Requests are same-origin and never preflight.
+- The same image runs in every environment, because the base URL is a path, not
+  a domain. Changing the domain needs no rebuild.
+
+`lib/api.ts` builds request URLs by string concatenation for exactly this
+reason. `new URL(path, base)` resolves an absolute path against the base's
+*origin* and discards the base's own path, so `/api` silently vanished — and a
+relative base threw a `TypeError` outright. `lib/api.test.ts` pins that.
