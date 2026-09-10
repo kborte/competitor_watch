@@ -1,0 +1,21 @@
+# Lint config. Kept deliberately small: this catches the classes of mistake that
+# actually turned up in review (unused imports, undefined names, shadowed
+# builtins) without imposing a formatter on an existing codebase.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "A"]
+ignore = [
+  # Long lines are almost always embedded SQL or prompt text, where breaking
+  # them hurts readability more than the length does.
+  "E501",
+]
+
+[lint.per-file-ignores]
+# Prompts and SQL blocks are the point of these files.
+"backend/classify.py" = ["E501"]
+"research_crawler/structure.py" = ["E501"]
+# Tests reach into private helpers deliberately, to pin behaviour that has no
+# public entry point.
+"tests/*" = ["B011"]

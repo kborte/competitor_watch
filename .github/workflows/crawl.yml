@@ -31,4 +31,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BACKEND_INGEST_URL: ${{ secrets.BACKEND_INGEST_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          # Set the CRAWL_DISABLED repo variable to 1 to stop the crawl
+          # without editing or disabling this workflow.
+          CRAWL_DISABLED: ${{ vars.CRAWL_DISABLED }}
           SEARCH_WINDOW_DAYS: ${{ inputs.search_window_days || '3' }}

@@ -1,0 +1,60 @@
+name: Stale-crawl alert
+
+# Answers the question nothing else did: "has anything landed recently?"
+#
+# A green crawl run does not mean data arrived — deliveries can fail, the
+# database can be paused, the shared secret can drift — and a dashboard with no
+# new findings looks identical to a quiet news week. This checks the one fact
+# that distinguishes them, straight from the backend's own /crawl-status.
+
+on:
+  schedule:
+    # 08:00 UTC — three hours after the daily crawl, so a slow run is finished.
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      max_age_hours:
+        description: "Fail if the newest finding is older than this many hours."
+        required: false
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check how long since the last delivery
+        env:
+          # Read endpoint, no secret needed — but it is not exposed publicly in
+          # the cluster, so this needs a reachable base URL for the API.
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          MAX_AGE_HOURS: ${{ inputs.max_age_hours || '30' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "::error::API_BASE_URL secret is not set — cannot check crawl freshness."
+            exit 1
+          fi
+
+          response=$(curl -fsS --max-time 30 "$API_BASE_URL/crawl-status") || {
+            echo "::error::Backend unreachable at $API_BASE_URL/crawl-status"
+            exit 1
+          }
+          echo "response: $response"
+
+          latest=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("latest_crawl_at") or "")')
+          if [ -z "$latest" ]; then
+            echo "::error::No findings have ever been delivered."
+            exit 1
+          fi
+
+          # Inline rather than a heredoc: a heredoc terminator cannot be
+          # indented, and everything inside a YAML block scalar is.
+          age_hours=$(python3 -c 'import sys; from datetime import UTC, datetime; s=datetime.fromisoformat(sys.argv[1]); s=s.replace(tzinfo=UTC) if s.tzinfo is None else s; print(int((datetime.now(UTC)-s).total_seconds()//3600))' "$latest")
+
+          echo "Newest finding is ${age_hours}h old (threshold ${MAX_AGE_HOURS}h)."
+          if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
+            echo "::error::No new findings for ${age_hours}h — the crawl is not landing data."
+            exit 1
+          fi
+          echo "::notice::Crawl is fresh (${age_hours}h)."

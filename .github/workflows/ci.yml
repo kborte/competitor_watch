@@ -1,0 +1,72 @@
+name: CI
+
+# Runs on every push and pull request. Nothing here needs secrets, a database,
+# or network access to Gemini — the tests cover pure logic and stub the SDK, so
+# CI stays fast and cannot be broken by an external outage.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  # A new push supersedes an in-flight run on the same ref.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — lint, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend and crawler dependencies
+        # Both packages are exercised by the test suite, and the crawler's are
+        # not a subset of the backend's (requests is crawler-only).
+        run: |
+          pip install -r backend/requirements-dev.txt
+          pip install -r research_crawler/requirements.txt
+
+      - name: Lint
+        run: ruff check backend research_crawler tests
+
+      - name: Tests
+        run: pytest -q
+
+  frontend:
+    name: Frontend — types, tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        # The base URL is a path prefix behind the shared Ingress, so the same
+        # build is valid in every environment — which is exactly what makes it
+        # safe to bake at build time.
+        env:
+          NEXT_PUBLIC_API_BASE_URL: /api
+        run: npm run build
