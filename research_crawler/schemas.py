@@ -6,7 +6,7 @@ has to be made there too.
 """
 
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -29,22 +29,25 @@ class Finding(BaseModel):
     keyword: str
     company: str
     category: Category
-    platform: Optional[str] = None
+    platform: str | None = None
     source_url: str
     title: str
     summary: str
     source_excerpt: str
-    published_at: Optional[date] = None
+    published_at: date | None = None
     retrieved_at: datetime
-    source_html: Optional[str] = None
-    og_title: Optional[str] = None
-    og_image_url: Optional[str] = None
-    og_description: Optional[str] = None
-    og_site_name: Optional[str] = None
+    source_html: str | None = None
+    og_title: str | None = None
+    og_image_url: str | None = None
+    og_description: str | None = None
+    og_site_name: str | None = None
     verified: bool = True
+    # Required here, Optional in backend/schemas.py: the crawler always knows
+    # the line and should never emit a finding without one, but the backend
+    # must still accept legacy deliveries that lack it.
     line: Line
-    tone: Optional[Tone] = None
-    source_location: Optional[str] = None
+    tone: Tone | None = None
+    source_location: str | None = None
     is_reference: bool = False
 
 

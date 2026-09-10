@@ -6,14 +6,18 @@ plus the real source URLs grounding cites — and independently fetches each cit
 page. structure.py turns that into clean Finding objects in a second call.
 """
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from google import genai
 from google.genai import types
 
-from . import config
+from . import config, llm
 from .fetch import fetch_page
+
+log = logging.getLogger(__name__)
 
 client = genai.Client()
 
@@ -53,49 +57,71 @@ def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, lis
         # Whole seconds only — the API rejects sub-second precision with
         # "Granularity of nano is not supported", and datetime.now()
         # carries microseconds.
-        now = datetime.now(timezone.utc).replace(microsecond=0)
+        now = datetime.now(UTC).replace(microsecond=0)
         search_kwargs["time_range_filter"] = types.Interval(
             start_time=now - timedelta(days=time_range_days), end_time=now,
         )
 
     window_note = f" (window: last {time_range_days}d)" if time_range_days else ""
-    print(f"  [{keyword}] calling Gemini with search grounding...{window_note}", flush=True)
-    response = client.models.generate_content(
+    log.info("[%s] calling Gemini with search grounding...%s", keyword, window_note)
+    response = llm.generate(
+        client,
         model=config.MODEL,
         contents=PROMPT_TEMPLATE.format(keyword=keyword),
-        config=types.GenerateContentConfig(
+        request_config=types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch(**search_kwargs))],
+            max_output_tokens=config.DISCOVER_MAX_OUTPUT_TOKENS,
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=config.DISCOVER_THINKING_BUDGET,
+            ),
+            http_options=types.HttpOptions(timeout=config.DISCOVER_TIMEOUT_MS),
         ),
+        label=keyword,
     )
     summary_text = response.text or ""
 
     grounding_metadata = response.candidates[0].grounding_metadata if response.candidates else None
-    chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
-    print(f"  [{keyword}] search returned {len(summary_text)} chars, "
-          f"{len(chunks or [])} grounded source(s) to verify", flush=True)
+    chunks = [c for c in (grounding_metadata.grounding_chunks if grounding_metadata else None) or []
+              if c.web and c.web.uri]
+
+    # Cap before fetching, not after: every extra source costs a page fetch and
+    # roughly 750 prompt tokens downstream, and grounding occasionally returns
+    # dozens. Dropped sources are logged rather than silently discarded.
+    if len(chunks) > config.MAX_SOURCES_PER_KEYWORD:
+        log.warning(
+            "[%s] %d grounded sources, capping at %d — %d dropped",
+            keyword, len(chunks), config.MAX_SOURCES_PER_KEYWORD,
+            len(chunks) - config.MAX_SOURCES_PER_KEYWORD,
+        )
+        chunks = chunks[:config.MAX_SOURCES_PER_KEYWORD]
+
+    total = len(chunks)
+    log.info("[%s] search returned %d chars, %d grounded source(s) to verify",
+             keyword, len(summary_text), total)
+
+    # Fetched concurrently: serially, 15s per page meant the sources alone could
+    # exhaust the per-company budget in crawler.py before structuring began.
+    with ThreadPoolExecutor(max_workers=config.FETCH_CONCURRENCY) as pool:
+        results = list(pool.map(lambda c: fetch_page(c.web.uri), chunks))
 
     resolved = []
-    for i, chunk in enumerate(chunks or [], 1):
-        if not chunk.web or not chunk.web.uri:
-            continue
-        result = fetch_page(chunk.web.uri)
+    for i, (chunk, result) in enumerate(zip(chunks, results, strict=True), 1):
         if result is None:
-            # Truly unresolvable (DNS/timeout/connection error) — no real
-            # URL exists to show a human, so this source is dropped
-            # entirely rather than ever citing Gemini's raw grounding
-            # redirect link (vertexaisearch.cloud.google.com/...) as a
-            # "source."
-            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
-                  f"could not be resolved at all — dropped, not citable", flush=True)
+            # Truly unresolvable (DNS/timeout/connection error, or refused by
+            # the URL guard) — no real URL exists to show a human, so this
+            # source is dropped entirely rather than ever citing Gemini's raw
+            # grounding redirect link (vertexaisearch.cloud.google.com/...) as
+            # a "source."
+            log.info("[%s] source %d/%d (%s): unresolvable — dropped, not citable",
+                     keyword, i, total, chunk.web.title)
             continue
 
         if result.clean_text is None:
-            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
-                  f"resolved to {result.final_url} but content fetch failed — "
-                  f"citable, unverified", flush=True)
+            log.info("[%s] source %d/%d (%s): resolved to %s but content fetch failed — "
+                     "citable, unverified", keyword, i, total, chunk.web.title, result.final_url)
         else:
-            print(f"  [{keyword}] source {i}/{len(chunks)} ({chunk.web.title}): "
-                  f"fetched {len(result.clean_text)} chars from {result.final_url}", flush=True)
+            log.info("[%s] source %d/%d (%s): fetched %d chars from %s",
+                     keyword, i, total, chunk.web.title, len(result.clean_text), result.final_url)
 
         resolved.append(ResolvedSource(
             domain_title=chunk.web.title or "", resolved_url=result.final_url,

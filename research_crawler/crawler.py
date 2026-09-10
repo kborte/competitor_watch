@@ -7,11 +7,14 @@ through only loses work not yet done. No novelty judgment happens here — every
 relevant finding is reported every run, and the backend's ledger decides what's new.
 """
 
+import logging
+import os
 import queue
+import sys
 import threading
-import traceback
 import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import requests
 
@@ -19,6 +22,13 @@ from . import config
 from .discover import discover
 from .schemas import IngestPayload
 from .structure import structure
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stdout,
+)
+log = logging.getLogger(__name__)
 
 # Each company gets its own budget for discover + structure combined. One
 # stuck company must never eat the whole run.
@@ -50,27 +60,71 @@ def _run_company(keyword: str, time_range_days: int | None):
     return result.get()
 
 
-def deliver(payload: IngestPayload) -> bool:
-    """POSTs one payload to the backend. Returns True on success and never
-    raises — a failed delivery must not crash the rest of the crawl."""
+class FatalDeliveryError(Exception):
+    """A delivery failure that every later delivery will hit too."""
+
+
+@dataclass
+class Delivery:
+    """Outcome of one delivery. `stored` and `classified` are separate facts:
+    the backend can accept a payload and still fail to judge it."""
+    stored: bool
+    classify_errors: int = 0
+
+    def __bool__(self) -> bool:
+        return self.stored
+
+
+def deliver(payload: IngestPayload) -> Delivery:
+    """POSTs one payload to the backend and reads what it says happened.
+    Raises FatalDeliveryError only for failures that will not fix themselves."""
     try:
         resp = requests.post(
             config.BACKEND_INGEST_URL,
             headers={"Authorization": f"Bearer {config.WEBHOOK_SECRET}"},
             data=payload.model_dump_json(),
-            timeout=30,
+            timeout=config.BACKEND_TIMEOUT_SECONDS,
         )
-        resp.raise_for_status()
-        return True
     except requests.RequestException as exc:
-        print(f"  DELIVERY FAILED ({payload.routine_run_id}): {exc}", flush=True)
-        return False
+        log.error("delivery failed (%s): %r", payload.routine_run_id, exc)
+        return Delivery(stored=False)
+
+    # 401 means the shared secret does not match; 403 that we are not allowed
+    # in. Neither improves by trying the next 200 findings, and the old code
+    # treated them exactly like a transient 503 — so a secret mismatch produced
+    # a full run of quiet failures. Fail fast and loudly instead.
+    if resp.status_code in (401, 403):
+        raise FatalDeliveryError(
+            f"backend rejected our credentials ({resp.status_code}) — "
+            f"WEBHOOK_SECRET does not match the backend's. Aborting the crawl."
+        )
+
+    if not resp.ok:
+        log.error("delivery failed (%s): HTTP %s %s",
+                  payload.routine_run_id, resp.status_code, resp.text[:300])
+        return Delivery(stored=False)
+
+    # HTTP 200 means "received and processed", not "everything succeeded". The
+    # body carries a per-payload error count, and discarding it is what made a
+    # stranded finding invisible in the run summary.
+    try:
+        body = resp.json()
+    except ValueError:
+        log.warning("delivery %s returned unreadable body: %s",
+                    payload.routine_run_id, resp.text[:200])
+        return Delivery(stored=True)
+
+    errors = int(body.get("errors") or 0)
+    if errors:
+        log.warning("delivery %s stored but %d finding(s) could not be classified: %s",
+                    payload.routine_run_id, errors, body)
+    return Delivery(stored=True, classify_errors=errors)
 
 
 def _envelope(crawl_id: str, seq: int, keyword: str, findings: list, no_findings: bool, note_suffix: str = "") -> IngestPayload:
     """Wraps findings in one delivery. Each gets a unique routine_run_id for the
     backend's idempotency check; crawl_id ties the run back together."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return IngestPayload(
         routine_run_id=f"{crawl_id}-{seq}",
         run_started_at=now,
@@ -82,62 +136,96 @@ def _envelope(crawl_id: str, seq: int, keyword: str, findings: list, no_findings
     )
 
 
-def run() -> None:
-    """Crawls every configured keyword in turn, delivering as it goes."""
+def run() -> int:
+    """Crawls every configured keyword in turn, delivering as it goes.
+    Returns a process exit code: non-zero when the run needs attention."""
+    if config.CRAWL_DISABLED:
+        # Kill switch, checked before any paid call: lets someone stop the crawl
+        # without editing the workflow or revoking a key.
+        log.warning("CRAWL_DISABLED is set — exiting without making any calls")
+        return 0
+
     crawl_id = str(uuid.uuid4())
     total = len(config.KEYWORDS)
     seq = 0
-    delivered = failed = 0
+    delivered = failed = classify_errors = 0
+    findings_delivered = 0
+    capped = False
 
-    print(f"crawl {crawl_id} starting — {total} keywords, "
-          f"{PER_COMPANY_TIMEOUT_SECONDS}s budget per company, "
-          f"search window: last {config.SEARCH_WINDOW_DAYS}d", flush=True)
+    log.info("crawl %s starting — %d keywords, %ds budget per company, "
+             "search window: last %dd, run cap %d findings",
+             crawl_id, total, PER_COMPANY_TIMEOUT_SECONDS, config.SEARCH_WINDOW_DAYS,
+             config.MAX_FINDINGS_PER_RUN)
 
-    for i, keyword in enumerate(config.KEYWORDS, 1):
-        print(f"\n[{i}/{total}] {keyword}", flush=True)
-        status, payload = _run_company(keyword, config.SEARCH_WINDOW_DAYS)
+    def record(result: Delivery) -> None:
+        nonlocal delivered, failed, classify_errors
+        delivered += result.stored
+        failed += not result.stored
+        classify_errors += result.classify_errors
 
-        if status == "timeout":
-            print(f"  [{keyword}] TIMEOUT — exceeded {PER_COMPANY_TIMEOUT_SECONDS}s budget, abandoning", flush=True)
-            seq += 1
-            ok = deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True, note_suffix=";timeout"))
-            delivered += ok
-            failed += not ok
-            continue
+    try:
+        for i, keyword in enumerate(config.KEYWORDS, 1):
+            log.info("[%d/%d] %s", i, total, keyword)
+            status, payload = _run_company(keyword, config.SEARCH_WINDOW_DAYS)
 
-        if status == "error":
-            exc = payload
-            print(f"  [{keyword}] ERROR — {exc!r}", flush=True)
-            traceback.print_exc()
-            seq += 1
-            ok = deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True))
-            delivered += ok
-            failed += not ok
-            continue
+            if status == "timeout":
+                log.error("[%s] TIMEOUT — exceeded %ds budget, abandoning",
+                          keyword, PER_COMPANY_TIMEOUT_SECONDS)
+                seq += 1
+                record(deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True,
+                                         note_suffix=";timeout")))
+                continue
 
-        summary, sources, batch = payload
+            if status == "error":
+                log.error("[%s] ERROR", keyword, exc_info=payload)
+                seq += 1
+                record(deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True)))
+                continue
 
-        if not batch.findings:
-            seq += 1
-            ok = deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True))
-            delivered += ok
-            failed += not ok
-            print(f"  [{keyword}] no findings — recorded", flush=True)
-            continue
+            _summary, _sources, batch = payload
 
-        for finding in batch.findings:
-            seq += 1
-            ok = deliver(_envelope(crawl_id, seq, keyword, [finding], no_findings=False))
-            delivered += ok
-            failed += not ok
-            print(f"  [{keyword}] -> {'delivered' if ok else 'FAILED'}: "
-                  f"[{finding.category}] {finding.title}", flush=True)
+            if not batch.findings:
+                seq += 1
+                record(deliver(_envelope(crawl_id, seq, keyword, [], no_findings=True)))
+                log.info("[%s] no findings — recorded", keyword)
+                continue
 
-        print(f"  [{keyword}] done — {len(batch.findings)} finding(s) "
-              f"({i}/{total} keywords complete)", flush=True)
+            for finding in batch.findings:
+                # Run-wide ceiling. Without it, a bad search day multiplies into
+                # an unbounded number of paid classification calls downstream.
+                if findings_delivered >= config.MAX_FINDINGS_PER_RUN:
+                    capped = True
+                    log.error("run cap of %d findings reached — abandoning the rest of "
+                              "the crawl (%d keywords unprocessed)",
+                              config.MAX_FINDINGS_PER_RUN, total - i + 1)
+                    break
+                seq += 1
+                result = deliver(_envelope(crawl_id, seq, keyword, [finding], no_findings=False))
+                record(result)
+                findings_delivered += result.stored
+                log.info("[%s] -> %s: [%s] %s", keyword,
+                         "delivered" if result.stored else "FAILED",
+                         finding.category, finding.title)
 
-    print(f"\ncrawl {crawl_id} complete — {delivered} delivered, {failed} failed", flush=True)
+            if capped:
+                break
+            log.info("[%s] done — %d finding(s) (%d/%d keywords complete)",
+                     keyword, len(batch.findings), i, total)
+    except FatalDeliveryError as exc:
+        log.error("%s", exc)
+        log.error("crawl %s aborted — %d delivered, %d failed", crawl_id, delivered, failed)
+        return 2
+
+    log.info("crawl %s complete — %d delivered, %d failed, %d classified with errors%s",
+             crawl_id, delivered, failed, classify_errors,
+             " (RUN CAP HIT)" if capped else "")
+
+    # A non-zero exit makes a bad run visible in the Actions UI instead of
+    # leaving a green tick over a run where nothing landed.
+    if failed or classify_errors or capped:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())

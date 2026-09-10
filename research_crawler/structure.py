@@ -6,14 +6,17 @@ source_excerpt verbatim from the fetched page text rather than paraphrase, so th
 grounding survives into the stored record.
 """
 
-from datetime import date, datetime, timezone
+import logging
+from datetime import UTC, date, datetime
 
 from google import genai
 from google.genai import types
 
-from . import config
+from . import config, llm
 from .discover import ResolvedSource
 from .schemas import FindingsBatch
+
+log = logging.getLogger(__name__)
 
 client = genai.Client()
 
@@ -73,6 +76,10 @@ def _format_sources(sources: list[ResolvedSource]) -> str:
     """Renders each fetched source as a labelled block for the prompt."""
     blocks = []
     for s in sources:
+        # Per-source cap. The number of sources is bounded upstream by
+        # config.MAX_SOURCES_PER_KEYWORD, so the whole block is now bounded:
+        # this cap alone left the total proportional to however many sources
+        # grounding happened to return.
         text = s.clean_text[:3000] if s.clean_text else "(fetch failed — no page text available)"
         blocks.append(f"URL: {s.resolved_url}\nDomain: {s.domain_title}\nFetched text:\n{text}")
     return "\n\n".join(blocks) if blocks else "(no sources were successfully grounded)"
@@ -81,18 +88,49 @@ def _format_sources(sources: list[ResolvedSource]) -> str:
 def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> FindingsBatch:
     """Turns one keyword's research summary and sources into findings, with the
     fields the model cannot be trusted to infer filled in deterministically."""
-    print(f"  [{keyword}] structuring into findings...", flush=True)
+    log.info("[%s] structuring into findings...", keyword)
+
+    # The summary was previously pasted in whole — the one prompt input in the
+    # project with no cap at all.
+    if len(summary) > config.MAX_SUMMARY_CHARS:
+        log.warning("[%s] summary %d chars, truncating to %d",
+                    keyword, len(summary), config.MAX_SUMMARY_CHARS)
+        summary = summary[:config.MAX_SUMMARY_CHARS]
+
     prompt = PROMPT_TEMPLATE.format(keyword=keyword, summary=summary, sources=_format_sources(sources))
-    response = client.models.generate_content(
+    response = llm.generate(
+        client,
         model=config.MODEL,
         contents=prompt,
-        config=types.GenerateContentConfig(
+        request_config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=FindingsBatch,
+            max_output_tokens=config.STRUCTURE_MAX_OUTPUT_TOKENS,
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=config.STRUCTURE_THINKING_BUDGET,
+            ),
+            http_options=types.HttpOptions(timeout=config.STRUCTURE_TIMEOUT_MS),
         ),
+        label=keyword,
     )
     batch = response.parsed
-    now = datetime.now(timezone.utc)
+    if batch is None:
+        # None whenever the response could not be read into the schema — a
+        # safety block, or output truncated at the token limit. Raising here
+        # keeps the failure attributable to this call.
+        raise ValueError(
+            f"[{keyword}] model returned no parseable findings: {(response.text or '')[:200]!r}"
+        )
+
+    # Cap per keyword: a runaway keyword becomes a logged, bounded event rather
+    # than an unbounded number of downstream classification calls.
+    if len(batch.findings) > config.MAX_FINDINGS_PER_KEYWORD:
+        log.warning("[%s] %d findings, capping at %d — %d dropped",
+                    keyword, len(batch.findings), config.MAX_FINDINGS_PER_KEYWORD,
+                    len(batch.findings) - config.MAX_FINDINGS_PER_KEYWORD)
+        batch.findings = batch.findings[:config.MAX_FINDINGS_PER_KEYWORD]
+
+    now = datetime.now(UTC)
     sources_by_url = {s.resolved_url: s for s in sources}
     for finding in batch.findings:
         finding.keyword = keyword
@@ -123,6 +161,6 @@ def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> Find
                 finding.published_at = date.fromisoformat(source.published_date)
             except ValueError:
                 pass  # malformed — keep whatever the LLM guessed
-    print(f"  [{keyword}] structured {len(batch.findings)} finding(s): "
-          + ", ".join(f"{f.category}" for f in batch.findings), flush=True)
+    log.info("[%s] structured %d finding(s): %s", keyword, len(batch.findings),
+             ", ".join(f.category for f in batch.findings))
     return batch

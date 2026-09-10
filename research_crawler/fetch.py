@@ -6,13 +6,20 @@ HTML as an auditable snapshot of how the page looked at observation time, and
 extracts the publish date deterministically from markup the LLM never sees.
 """
 
+import ipaddress
 import json
+import logging
 import re
+import socket
 from dataclasses import dataclass
-from datetime import date as _date, timedelta as _timedelta
+from datetime import date as _date
+from datetime import timedelta as _timedelta
+from urllib.parse import urlsplit
 
 import requests
 from bs4 import BeautifulSoup
+
+log = logging.getLogger(__name__)
 
 _ISO_DATE = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})")
 _TEXT_DATE_DMY = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})\b")
@@ -23,6 +30,19 @@ _MONTHS = {m: i for i, m in enumerate(
 USER_AGENT = "QIC-CompetitorWatch/1.0 (internal competitive-intelligence monitor)"
 CONTENT_TAGS = ["h1", "h2", "h3", "h4", "p", "li", "td", "span"]
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
+
+# Hard ceiling on what we will pull over the wire, independent of the snapshot
+# cap: the snapshot cap decides what to *store*, this decides when to stop
+# *reading*. Without it a multi-gigabyte response is fully buffered in memory
+# before anything checks its size.
+MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024
+
+# Only ever fetch real web pages. The URLs come from Gemini's grounding
+# metadata, so they are not attacker-chosen — but they are not ours either, and
+# the crawler now runs inside a cluster where file://, gopher:// or a request to
+# a link-local address reaches things a public runner never could.
+ALLOWED_SCHEMES = {"http", "https"}
+MAX_REDIRECTS = 5
 
 
 @dataclass
@@ -229,35 +249,103 @@ def extract_clean_text(html: str) -> str:
     return "\n".join(lines)
 
 
+def _is_public_address(host: str) -> bool:
+    """Whether every address this host resolves to is publicly routable."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    addresses = {info[4][0] for info in infos}
+    if not addresses:
+        return False
+    for raw in addresses:
+        try:
+            ip = ipaddress.ip_address(raw)
+        except ValueError:
+            return False
+        # Rejects loopback, RFC1918, link-local (including the 169.254.169.254
+        # metadata endpoint), unique-local v6 and the rest in one check.
+        if not ip.is_global:
+            return False
+    return True
+
+
+def _check_url(url: str) -> str | None:
+    """Returns None if the URL is safe to fetch, or a reason to refuse."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ALLOWED_SCHEMES:
+        return f"scheme {parts.scheme!r} not allowed"
+    if not parts.hostname:
+        return "no host"
+    if not _is_public_address(parts.hostname):
+        return f"host {parts.hostname!r} does not resolve to a public address"
+    return None
+
+
 def fetch_page(url: str, timeout: int = 15) -> FetchResult | None:
     """Fetches one URL. Returns None only when the destination could not be
     resolved at all, since there is no real URL to report in that case."""
     # A request that resolves but returns a bad status (403, 404, ...) still
     # yields a FetchResult carrying the real final_url with no content: the
     # caller can cite the page, it just cannot verify what it says.
+    refusal = _check_url(url)
+    if refusal:
+        log.warning("refusing to fetch %s: %s", url, refusal)
+        return None
+
+    session = requests.Session()
+    session.max_redirects = MAX_REDIRECTS
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        # stream=True so headers arrive before the body: the size cap below is
+        # enforced while reading rather than after the whole response is already
+        # buffered in memory.
+        resp = session.get(
+            url, headers={"User-Agent": USER_AGENT}, timeout=timeout, stream=True,
+        )
     except requests.RequestException:
+        session.close()
         return None
 
     try:
-        resp.raise_for_status()
-    except requests.RequestException:
-        return FetchResult(final_url=resp.url, raw_html=None, clean_text=None)
+        try:
+            resp.raise_for_status()
+        except requests.RequestException:
+            return FetchResult(final_url=resp.url, raw_html=None, clean_text=None)
 
+        # Redirects are followed by default, so the final hop is a different URL
+        # than the one already vetted — re-check it before reading the body.
+        refusal = _check_url(resp.url)
+        if refusal:
+            log.warning("refusing redirect target %s: %s", resp.url, refusal)
+            return None
+
+        body = bytearray()
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            body.extend(chunk)
+            if len(body) > MAX_DOWNLOAD_BYTES:
+                log.warning(
+                    "%s exceeded %d bytes, abandoning body", resp.url, MAX_DOWNLOAD_BYTES,
+                )
+                return FetchResult(final_url=resp.url, raw_html=None, clean_text=None)
+        resp._content = bytes(body)  # let requests decode with its own charset logic
+    finally:
+        resp.close()
+        session.close()
+
+    text = resp.text
     content_type = resp.headers.get("Content-Type", "")
     is_html = "html" in content_type.lower()
-    raw_html = resp.text
+    raw_html = text
     if not is_html or len(raw_html.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
         raw_html = None
-    og = extract_og_metadata(resp.text) if is_html else {}
+    og = extract_og_metadata(text) if is_html else {}
     published_date = (
-        extract_published_date(resp.text, resp.url) if is_html
+        extract_published_date(text, resp.url) if is_html
         else extract_date_from_url(resp.url)
     )
 
     return FetchResult(
-        final_url=resp.url, raw_html=raw_html, clean_text=extract_clean_text(resp.text),
+        final_url=resp.url, raw_html=raw_html, clean_text=extract_clean_text(text),
         og_title=og.get("og_title"), og_image_url=og.get("og_image_url"),
         og_description=og.get("og_description"), og_site_name=og.get("og_site_name"),
         published_date=published_date,
