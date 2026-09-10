@@ -7,7 +7,7 @@ decides. Everything below exists to express that single rule in whichever SQL
 parameter style the calling query needs.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 # Findings are timestamped in UTC, but the audience is Qatar-based, so "today"
 # means a Qatar-local calendar day. Qatar doesn't observe DST, so a fixed offset
@@ -55,7 +55,7 @@ _PRIOR = (
 def bounds(window: str) -> tuple[datetime, date] | tuple[None, None]:
     """Cutoffs for a window as (retrieved_at instant, published_at date).
     Returns (None, None) for "all", which has no cutoff."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     qatar_now = now + QATAR_OFFSET
     if window == "today":
         qatar_midnight = qatar_now.replace(hour=0, minute=0, second=0, microsecond=0)

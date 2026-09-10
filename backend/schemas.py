@@ -7,7 +7,7 @@ Classification is the structured output the classifier is forced to return.
 """
 
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -30,22 +30,27 @@ class Finding(BaseModel):
     keyword: str
     company: str
     category: Category
-    platform: Optional[str] = None
+    platform: str | None = None
     source_url: str
     title: str
     summary: str
     source_excerpt: str
-    published_at: Optional[date] = None
+    published_at: date | None = None
     retrieved_at: datetime
-    source_html: Optional[str] = None
-    og_title: Optional[str] = None
-    og_image_url: Optional[str] = None
-    og_description: Optional[str] = None
-    og_site_name: Optional[str] = None
+    source_html: str | None = None
+    og_title: str | None = None
+    og_image_url: str | None = None
+    og_description: str | None = None
+    og_site_name: str | None = None
     verified: bool = True
-    line: Optional[Line] = None
-    tone: Optional[Tone] = None
-    source_location: Optional[str] = None
+    # Optional here but required in research_crawler/schemas.py, deliberately:
+    # the sender is strict, the receiver tolerant. Rows predating the `line`
+    # field exist, and a required field would make the endpoint reject a
+    # delivery it can otherwise store perfectly well. A missing line only
+    # narrows the dashboard's line filter, it does not corrupt anything.
+    line: Line | None = None
+    tone: Tone | None = None
+    source_location: str | None = None
     is_reference: bool = False
 
 

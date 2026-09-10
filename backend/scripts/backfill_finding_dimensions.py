@@ -81,7 +81,7 @@ def run(apply: bool, limit: int | None = None) -> None:
             else:
                 cur.execute(query)
             columns = [desc[0] for desc in cur.description]
-            rows = [dict(zip(columns, values)) for values in cur.fetchall()]
+            rows = [dict(zip(columns, values, strict=True)) for values in cur.fetchall()]
 
         print(f"{len(rows)} finding(s) need dimensions. {'APPLYING' if apply else 'DRY RUN'}.")
         for row in rows:

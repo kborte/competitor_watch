@@ -17,8 +17,9 @@ from collections import defaultdict
 # rather than duplicating the extraction logic and letting the two drift.
 sys.path.insert(0, __file__.rsplit("/backend/", 1)[0])
 
-from research_crawler.fetch import extract_date_from_url, extract_published_date  # noqa: E402
 import requests  # noqa: E402
+
+from research_crawler.fetch import extract_date_from_url, extract_published_date  # noqa: E402
 
 from .. import db  # noqa: E402
 

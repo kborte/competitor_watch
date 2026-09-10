@@ -1,24 +1,33 @@
 """FastAPI app — the HTTP surface, and nothing else.
 
 POST /ingest is the write path (secret, validate, hand to ingest.py); the GET
-routes are the read API behind the dashboard, guarded only by a CORS allowlist.
-Both keep their logic elsewhere, so this file stays a translation from request
-params to a call and back to a response.
+routes are the read API behind the dashboard. Both keep their logic elsewhere,
+so this file stays a translation from request params to a call and back to a
+response.
 
 Run locally:
     WEBHOOK_SECRET=... uvicorn backend.main:app --reload --port 8000
 """
 
-from datetime import datetime, timezone
+import hmac
+import logging
+import os
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from . import config, db, htmlutil, reads
 from . import ingest as ingest_logic
 from .schemas import Category, IngestPayload, Line
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log = logging.getLogger(__name__)
 
 # Query-param vocabularies. Declared as types rather than checked by hand:
 # FastAPI rejects anything outside them with a 422 before the route body
@@ -32,36 +41,71 @@ SortDir = Literal["asc", "desc"]
 Materiality = Literal["low", "medium", "high"]
 
 app = FastAPI()
+
+# No CORS middleware: the dashboard and the API share one origin behind the
+# Ingress (dashboard at /, API at /api), so browser requests are same-origin and
+# never preflight. Access control is the Ingress's job — /ingest is not exposed
+# there, and the crawler reaches it over internal cluster DNS.
+
+# Applied under an advisory lock, so several pods starting at once during a
+# RollingUpdate cannot race each other (see db.init_db).
 db.init_db()
 
-if config.FRONTEND_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.FRONTEND_ORIGINS,
-        allow_methods=["GET"],
-        allow_headers=["*"],
-    )
+
+@app.get("/healthz")
+def healthz():
+    """Liveness: proves the process is up and serving. Deliberately touches no
+    dependency, so a database blip cannot cause a restart loop."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    """Readiness: proves the database is reachable, so a pod that cannot serve
+    real traffic is taken out of rotation rather than restarted."""
+    try:
+        with db.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+    except Exception as exc:
+        log.exception("readiness check failed")
+        raise HTTPException(status_code=503, detail="database unreachable") from exc
+    return {"status": "ready"}
 
 
 @app.post("/ingest")
 async def ingest(request: Request, authorization: str = Header(...)):
     """Accepts one crawler delivery. 401 on a bad secret, 422 on a malformed
     body (which is stored in rejected_payloads before being rejected)."""
-    if authorization != f"Bearer {config.WEBHOOK_SECRET}":
+    # Constant-time comparison: `!=` on secrets short-circuits at the first
+    # differing byte, so response timing leaks how much of a guess was correct.
+    if not hmac.compare_digest(authorization, f"Bearer {config.WEBHOOK_SECRET}"):
         raise HTTPException(status_code=401, detail="bad secret")
 
     raw_body = await request.body()
     try:
         payload = IngestPayload.model_validate_json(raw_body)
     except ValidationError as exc:
-        with db.connect() as conn:
-            db.insert_rejected_payload(
-                conn, datetime.now(timezone.utc),
-                raw_body.decode("utf-8", errors="replace"), str(exc),
-            )
-        raise HTTPException(status_code=422, detail=str(exc))
+        # Read as raw bytes and validated here rather than via a typed body
+        # parameter, so a malformed delivery can be stored before it is
+        # rejected. FastAPI would 422 it before the handler ran.
+        # `detail` is bound now because Python unbinds `exc` when this block
+        # ends, and the closure below outlives the name.
+        detail = str(exc)
+        body_text = raw_body.decode("utf-8", errors="replace")
 
-    return ingest_logic.process(payload)
+        def store_rejected() -> None:
+            with db.connect() as conn:
+                db.insert_rejected_payload(
+                    conn, datetime.now(UTC), body_text, detail,
+                )
+        await run_in_threadpool(store_rejected)
+        raise HTTPException(status_code=422, detail=detail) from exc
+
+    # process() is fully synchronous — blocking database calls and a multi-second
+    # LLM call. Awaiting it directly on the event loop would stall every other
+    # request in this worker for its whole duration, including the health probes.
+    return await run_in_threadpool(ingest_logic.process, payload)
 
 
 @app.get("/findings")

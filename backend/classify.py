@@ -7,15 +7,25 @@ Only findings that survive dedup and are not QIC reference rows get here
 (ingest.py), so classifications are sparse relative to findings.
 """
 
+import logging
+import time
+
 from google import genai
 from google.genai import types
 
-from . import config  # noqa: F401 — import order matters: this triggers load_dotenv() before Client() reads the env
+from . import config
 from .schemas import Classification
+
+log = logging.getLogger(__name__)
 
 client = genai.Client()  # reads GEMINI_API_KEY from the environment
 
 MODEL = "gemini-3.6-flash"
+
+# Statuses worth another attempt: rate limiting and transient unavailability.
+# Everything else — a bad key, a malformed request — fails the same way on every
+# retry, so retrying only delays the error and spends quota.
+_RETRYABLE_STATUSES = (429, 500, 502, 503, 504)
 
 # The category bucket definitions are condensed from the crawler's fuller
 # taxonomy (research_crawler/structure.py). Without them the model would still
@@ -50,18 +60,79 @@ Judge:
 """
 
 
-def classify(finding) -> tuple[Classification, str, str]:
-    """Returns (classification, prompt_sent, raw_output) — the last two are for the audit log."""
+def _status_of(exc: Exception) -> int | None:
+    """HTTP status carried by a Gemini SDK error, or None if it isn't one."""
+    for attr in ("code", "status_code"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None
+
+
+def _usage_of(response) -> dict:
+    """Token counts for one response, empty when the SDK reports none."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return {}
+    return {
+        "input_tokens": getattr(usage, "prompt_token_count", None),
+        "output_tokens": getattr(usage, "candidates_token_count", None),
+        "total_tokens": getattr(usage, "total_token_count", None),
+    }
+
+
+def _generate(prompt: str):
+    """Calls the model, retrying only transient failures with linear backoff."""
+    request_config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=Classification,
+        # Bounded output and no thinking budget: this is a short structured
+        # verdict over an excerpt already in the prompt. Left unbounded, a
+        # single degenerate response can cost many times a normal one.
+        max_output_tokens=config.CLASSIFY_MAX_OUTPUT_TOKENS,
+        thinking_config=types.ThinkingConfig(thinking_budget=config.CLASSIFY_THINKING_BUDGET),
+        # Innermost timeout in the chain, so this gives up before the crawler
+        # stops waiting and long before the server drops the request.
+        http_options=types.HttpOptions(timeout=config.CLASSIFY_TIMEOUT_MS),
+    )
+    last: Exception | None = None
+    for attempt in range(1, config.LLM_MAX_ATTEMPTS + 1):
+        try:
+            return client.models.generate_content(
+                model=MODEL, contents=prompt, config=request_config,
+            )
+        except Exception as exc:
+            status = _status_of(exc)
+            if status not in _RETRYABLE_STATUSES or attempt == config.LLM_MAX_ATTEMPTS:
+                raise
+            last = exc
+            delay = config.LLM_BACKOFF_SECONDS * attempt
+            log.warning(
+                "classify attempt %d/%d failed with %s, retrying in %.1fs",
+                attempt, config.LLM_MAX_ATTEMPTS, status, delay,
+            )
+            time.sleep(delay)
+    raise last  # unreachable: the loop either returns or raises
+
+
+def classify(finding) -> tuple[Classification, str, str, dict]:
+    """Judges one finding. Returns (classification, prompt, raw_output, usage) —
+    the last three are for the audit log and spend accounting."""
     prompt = PROMPT_TEMPLATE.format(
         company=finding.company, category=finding.category, title=finding.title,
         summary=finding.summary, source_excerpt=finding.source_excerpt,
     )
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=Classification,
-        ),
-    )
-    return response.parsed, prompt, response.text
+    response = _generate(prompt)
+    parsed = response.parsed
+    if parsed is None:
+        # `.parsed` is None whenever the response could not be read into the
+        # schema — a safety block, or output truncated at the token limit. It is
+        # not an exception, so without this the None travels on and surfaces
+        # much later as an AttributeError inside the database layer, pointing at
+        # the wrong component entirely.
+        raise ValueError(
+            f"model returned no parseable classification: {(response.text or '')[:200]!r}"
+        )
+    return parsed, prompt, response.text, _usage_of(response)

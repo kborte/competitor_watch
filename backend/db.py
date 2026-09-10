@@ -97,6 +97,13 @@ BEGIN
     END IF;
 END $$;
 
+-- Token counts per call, so spend is measurable per finding and per run from
+-- the database rather than only visible on the Google bill. Nullable: rows
+-- written before this existed have no counts, and 0 would be a lie.
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS input_tokens INTEGER;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS output_tokens INTEGER;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS total_tokens INTEGER;
+
 CREATE TABLE IF NOT EXISTS classifications (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     llm_call_id BIGINT NOT NULL REFERENCES llm_calls(id),
@@ -118,6 +125,23 @@ CREATE TABLE IF NOT EXISTS rejected_payloads (
     raw_body TEXT NOT NULL,
     validation_error TEXT NOT NULL
 );
+
+-- Indexes. Postgres indexes primary keys automatically but not foreign keys, so
+-- every join in reads/ was a sequential scan. The two audit-chain joins run on
+-- every feed and stats query; the rest back the filters and sorts the dashboard
+-- actually issues.
+CREATE INDEX IF NOT EXISTS idx_llm_calls_finding_id ON llm_calls (finding_id);
+CREATE INDEX IF NOT EXISTS idx_classifications_llm_call_id ON classifications (llm_call_id);
+CREATE INDEX IF NOT EXISTS idx_findings_run_id ON findings (run_id);
+CREATE INDEX IF NOT EXISTS idx_findings_retrieved_at ON findings (retrieved_at DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_published_at ON findings (published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_company ON findings (company);
+-- The feed's default shape: non-duplicate competitor rows, newest first.
+CREATE INDEX IF NOT EXISTS idx_findings_feed ON findings (retrieved_at DESC)
+    WHERE NOT is_duplicate AND NOT is_reference;
+-- Retention sweep: find rows that still carry a snapshot.
+CREATE INDEX IF NOT EXISTS idx_findings_snapshot_retention ON findings (retrieved_at)
+    WHERE source_html IS NOT NULL;
 """
 
 
@@ -132,10 +156,42 @@ def connect():
         conn.close()
 
 
+@contextmanager
+def savepoint(conn, name: str = "finding"):
+    """Nested transaction for one finding. If the block raises, only this
+    finding's rows are undone — the rest of the payload survives."""
+    # A Python-level failure (a bad LLM response) leaves the transaction
+    # healthy, so the rollback discards exactly the rows written inside the
+    # block. The name is a fixed literal, never caller-supplied.
+    with conn.cursor() as cur:
+        cur.execute(f"SAVEPOINT {name}")
+    try:
+        yield
+    except Exception:
+        with conn.cursor() as cur:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+        raise
+    else:
+        with conn.cursor() as cur:
+            cur.execute(f"RELEASE SAVEPOINT {name}")
+
+
+# Arbitrary but fixed: any process applying this schema must pick the same
+# number for the lock to mean anything.
+_SCHEMA_LOCK_KEY = 0x0C0FFEE5
+
+
 def init_db() -> None:
-    """Applies SCHEMA. Safe to call repeatedly — every statement is idempotent."""
+    """Applies SCHEMA under an advisory lock. Safe to call repeatedly, and safe
+    when several pods start at once."""
+    # `CREATE TABLE IF NOT EXISTS` is not atomic: two pods checking and creating
+    # concurrently — exactly what a RollingUpdate does — can both pass the check
+    # and one then fails with a duplicate-object error, crash-looping the new
+    # pod. The transaction-scoped lock serialises them: the first applies the
+    # schema, the others wait and then find everything already present.
     with connect() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_LOCK_KEY,))
             cur.execute(SCHEMA)
 
 
@@ -226,13 +282,21 @@ def insert_finding(conn, run_id: str, finding, is_duplicate: bool) -> int:
         return cur.fetchone()[0]
 
 
-def insert_llm_call(conn, finding_id: int, model: str, prompt: str, raw_output: str, called_at) -> int:
-    """Records the exact prompt and raw model output. Returns the new call id."""
+def insert_llm_call(
+    conn, finding_id: int, model: str, prompt: str, raw_output: str, called_at,
+    usage: dict | None = None,
+) -> int:
+    """Records the exact prompt, raw output and token usage for one call.
+    Returns the new call id."""
+    usage = usage or {}
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO llm_calls (finding_id, model, prompt, raw_output, called_at) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (finding_id, model, prompt, raw_output, called_at),
+            "INSERT INTO llm_calls "
+            "(finding_id, model, prompt, raw_output, called_at, "
+            " input_tokens, output_tokens, total_tokens) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (finding_id, model, prompt, raw_output, called_at,
+             usage.get("input_tokens"), usage.get("output_tokens"), usage.get("total_tokens")),
         )
         return cur.fetchone()[0]
 
