@@ -9,6 +9,3 @@ backend/.env
 research_crawler/.env
 
 *-key.json
-
-# Internal review response — working notes, not part of the project docs.
-docs/code-review-response.md
