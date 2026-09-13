@@ -40,10 +40,17 @@ git status --porcelain     # must print nothing that belongs in the image
 | What you changed | What to run |
 | --- | --- |
 | Anything under `backend/` | Steps 3 to 5 |
+| Anything under `shared/` | Steps 3 to 5 — the backend imports it, and it is baked into the image |
 | `Dockerfile` or `backend/requirements.txt` | Steps 3 to 5 |
 | Only an env var or secret | Step 4b only. No build. |
 | `research_crawler/` | Nothing here. It runs in GitHub Actions, redeploys itself on push. |
 | `frontend/` | Nothing here. Deployed separately. |
+
+A `shared/` change reaches the two components by different routes and at
+different times: the crawler picks it up on the next push (GitHub Actions checks
+out the repo), the backend only when you rebuild the image. Deploy both after
+changing the wire contract, or a delivery will be validated against two
+different versions of it.
 
 ## Step 3. Build
 

@@ -266,7 +266,7 @@ crawler had only just discovered them.
 | --- | --- | --- |
 | **Google Gemini API** (`gemini-3.6-flash`) | Search grounding, finding structuring, classification | Three call sites; the only paid per-use dependency |
 | **Google Cloud Run** | Backend hosting | Project `qic-ai-interns`, region `me-central1` |
-| **Google Cloud Build** + Artifact Registry | Backend image build and storage | Image tagged `:latest` only |
+| **Google Cloud Build** + Artifact Registry | Backend image build and storage | Images tagged by commit SHA |
 | **Google Secret Manager** | Backend secrets | Injected into Cloud Run at runtime |
 | **Supabase** | Managed Postgres | Free tier pauses after ~7 days idle; the daily crawl keeps it awake |
 | **GitHub Actions** | Crawler scheduling and execution | Two workflows |
@@ -305,14 +305,28 @@ crawler had only just discovered them.
 
 ### 5.5 Internal coupling
 
-The two Python components are deployed separately and **deliberately do not share code**. `Finding` and
-`IngestPayload` are duplicated in `research_crawler/schemas.py` and `backend/schemas.py`; the HTML
-text-reduction logic is duplicated in `research_crawler/fetch.py` and `backend/htmlutil.py`.
+The two Python components are deployed separately but share one definition of
+everything that crosses between them, in `shared/`:
 
-> **Maintenance consequence:** the two agree on a wire format, not on an import. A change to either
-> duplicated pair must be made in both places or the components will drift silently.
+| Module | Contents |
+| --- | --- |
+| `shared/schemas.py` | The `/ingest` wire contract — `Finding`, `IngestPayload`, and the category/line/tone enums |
+| `shared/htmltext.py` | `extract_clean_text()` — both sides must agree, since dedup compares hashes derived from it |
+| `shared/gemini.py` | Retry policy and token accounting for all three model calls |
 
-Three places must also stay in agreement when a competitor is added or removed:
+`shared/` imports from neither package and reads no configuration: values that
+differ (retry budgets, timeouts) are passed in by the caller. A test enforces
+that, so the dependency cannot start running backwards.
+
+> These were three copy-pasted pairs until recently, on the reasoning that
+> separately-deployed services should agree on a wire format rather than on
+> code. That holds for independently-versioned services; it did not hold here,
+> where both live in one repo and change in one commit. Drift showed up only at
+> runtime — a rejected delivery, or a content hash that disagreed with itself
+> between runs.
+
+Three places must still agree when a competitor is added or removed, and nothing
+enforces it:
 
 ```mermaid
 flowchart LR
@@ -326,8 +340,8 @@ flowchart LR
     class A,B,C warn
 ```
 
-A keyword that matches no registry alias does not error — it silently falls into the "Qatar Insurance
-Market" bucket.
+A keyword that matches no registry alias does not error — it silently falls into
+the "Qatar Insurance Market" bucket. A test now catches that case.
 
 ---
 
@@ -382,9 +396,9 @@ request the crawler is waiting on). Crawl ceilings — `MAX_SOURCES_PER_KEYWORD`
 | **Classifier category overlay is imprecise** | The dashboard shows the classifier's category where one exists and the crawler's otherwise. On a 200-row sample this changed 7% of categories — some correctly, but it also retagged a product review away from `social_sentiment`, removing it from that filter. Under review. |
 | **Model output is still non-deterministic** | Per-call token, thinking and timeout limits are set, and per-keyword and per-run finding caps exist, so cost is bounded. Quality is not: the same finding can be judged differently on two runs. |
 | **Read API is unauthenticated** | By decision: access control lives at the Ingress, which does not expose `/ingest` at all. Anything that can route to the service can read the findings, so the API must not be given a public hostname without a gateway. |
-| **A stranded finding is retried, not lost** | If classification fails, nothing is stored for that finding and the next daily crawl re-reports it. The run exits non-zero and the stale-crawl alert catches a day where nothing landed at all. |
+| **A stranded finding is retried, not lost** | A failed delivery is retried 3× (free: `/ingest` is idempotent before classifying). If classification fails, nothing is stored for that finding and the next daily crawl re-reports it. The run exits non-zero, and the stale-crawl alert catches a day where nothing landed at all. |
 | **Snapshots expire** | Archived page HTML is cleared after the retention window, so a finding older than that can no longer be re-rendered as the page looked. The verdict, excerpt and audit chain remain. |
-| **Duplicated contracts** | See §5.5 — schemas, HTML utilities and the model-retry helper are duplicated by design and can drift. A test pins the retry statuses; the rest rely on review. |
+| **Three files must agree on the competitor list** | `KEYWORDS`, `REGISTRY` and the frontend logo map (§5.5). A keyword matching no alias does not error, it lands in the market bucket. A test catches it; nothing at runtime does. |
 
 ---
 
@@ -392,13 +406,17 @@ request the crawler is waiting on). Crawl ceilings — `MAX_SOURCES_PER_KEYWORD`
 
 ```
 competitor_watch/
+├─ shared/                    Imported by both deployables
+│  ├─ schemas.py              The /ingest wire contract
+│  ├─ htmltext.py             HTML to comparable plain text
+│  └─ gemini.py               Model retry policy + token accounting
 ├─ research_crawler/          Scheduled crawler (GitHub Actions)
 │  ├─ crawler.py              Entry point
 │  ├─ discover.py             Grounded search
 │  ├─ fetch.py                Page fetch, date + metadata extraction
 │  ├─ structure.py            Shape into findings
 │  ├─ config.py               Keywords + env
-│  └─ schemas.py              Wire contract
+│  └─ schemas.py              Re-exports shared/, plus FindingsBatch
 ├─ backend/                   FastAPI service (Cloud Run)
 │  ├─ main.py                 HTTP layer
 │  ├─ ingest.py               Write path
@@ -409,6 +427,7 @@ competitor_watch/
 │  ├─ reads/                  Query layer (windows · findings · stats)
 │  └─ scripts/                One-off maintenance jobs
 ├─ frontend/                  Next.js dashboard (Vercel)
+├─ tests/                     pytest suite (no network, no database)
 ├─ docs/backend-api.md        Full API reference
 ├─ DEPLOY.md                  Backend deployment runbook
 └─ .github/workflows/         Crawler schedules

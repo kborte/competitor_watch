@@ -22,6 +22,9 @@ Cloud Run: backend/             FastAPI
        ├─ classify.py           one Gemini call: materiality, category, grounding
        ├─ db.py                 six tables, full audit chain
        └─ reads/                windows.py (freshness rule) + findings.py + stats.py
+
+shared/                         imported by both: the /ingest wire contract,
+                                HTML-to-text, and the Gemini retry helper
             │
             ▼
        Supabase Postgres

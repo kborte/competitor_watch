@@ -154,3 +154,27 @@ class TestEnvExample:
                 keys[match.group(1)] = match.group(2)
         classify_s = int(keys["CLASSIFY_TIMEOUT_MS"]) / 1000
         assert classify_s < int(keys["BACKEND_TIMEOUT_SECONDS"])
+
+
+class TestDocsStayHonest:
+    """Docs make checkable claims; the ones a script can verify should be
+    verified, since a stale number is how a document loses its credibility."""
+
+    @staticmethod
+    def repo_root() -> pathlib.Path:
+        return pathlib.Path(__file__).resolve().parent.parent
+
+    def test_every_route_is_in_the_api_reference(self):
+        main = (self.repo_root() / "backend" / "main.py").read_text()
+        reference = (self.repo_root() / "docs" / "backend-api.md").read_text()
+        routes = set(re.findall(r'@app\.(?:get|post)\("([^"]+)"', main))
+        undocumented = [
+            route for route in routes
+            if re.sub(r"\{[^}]+\}", "{id}", route) not in reference and route not in reference
+        ]
+        assert not undocumented, f"routes missing from docs/backend-api.md: {undocumented}"
+
+    def test_table_count_claims_match_the_schema(self):
+        db = (self.repo_root() / "backend" / "db.py").read_text()
+        tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", db))
+        assert len(tables) == 6, f"schema now has {len(tables)} tables; docs say six"
