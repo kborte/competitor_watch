@@ -11,6 +11,7 @@ import logging
 import queue
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,9 +75,9 @@ class Delivery:
         return self.stored
 
 
-def deliver(payload: IngestPayload) -> Delivery:
-    """POSTs one payload to the backend and reads what it says happened.
-    Raises FatalDeliveryError only for failures that will not fix themselves."""
+def _attempt(payload: IngestPayload) -> Delivery | None:
+    """One delivery attempt. Returns the outcome, or None if it is worth
+    retrying. Raises FatalDeliveryError for failures that never fix themselves."""
     try:
         resp = requests.post(
             config.BACKEND_INGEST_URL,
@@ -85,21 +86,29 @@ def deliver(payload: IngestPayload) -> Delivery:
             timeout=config.BACKEND_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
-        log.error("delivery failed (%s): %r", payload.routine_run_id, exc)
-        return Delivery(stored=False)
+        # Connection refused, DNS failure, or a timeout: all transient by
+        # nature, and the pod may simply be restarting.
+        log.warning("delivery attempt failed (%s): %r", payload.routine_run_id, exc)
+        return None
 
     # 401 means the shared secret does not match; 403 that we are not allowed
-    # in. Neither improves by trying the next 200 findings, and the old code
-    # treated them exactly like a transient 503 — so a secret mismatch produced
-    # a full run of quiet failures. Fail fast and loudly instead.
+    # in. Neither improves on the next attempt or the next finding, and treating
+    # them like a transient 503 produced a whole run of quiet failures.
     if resp.status_code in (401, 403):
         raise FatalDeliveryError(
             f"backend rejected our credentials ({resp.status_code}) — "
             f"WEBHOOK_SECRET does not match the backend's. Aborting the crawl."
         )
 
+    if resp.status_code >= 500:
+        log.warning("delivery attempt failed (%s): HTTP %s %s",
+                    payload.routine_run_id, resp.status_code, resp.text[:200])
+        return None
+
     if not resp.ok:
-        log.error("delivery failed (%s): HTTP %s %s",
+        # A 4xx we are allowed to see is our own fault — a malformed payload
+        # fails identically however many times it is sent.
+        log.error("delivery rejected (%s): HTTP %s %s",
                   payload.routine_run_id, resp.status_code, resp.text[:300])
         return Delivery(stored=False)
 
@@ -118,6 +127,33 @@ def deliver(payload: IngestPayload) -> Delivery:
         log.warning("delivery %s stored but %d finding(s) could not be classified: %s",
                     payload.routine_run_id, errors, body)
     return Delivery(stored=True, classify_errors=errors)
+
+
+def deliver(payload: IngestPayload) -> Delivery:
+    """POSTs one payload to the backend, retrying transient failures, and reads
+    what it says happened. Raises FatalDeliveryError on a credentials failure."""
+    # Retrying is free in tokens: /ingest is idempotent on routine_run_id and
+    # commits that row before classifying, so a repeat of the same delivery
+    # short-circuits to "already processed" without a model call — even while
+    # the original request is still in flight, which is exactly the case when
+    # the first attempt timed out. Only genuinely transient outcomes are
+    # retried; a rejected payload and a bad secret are not.
+    for attempt in range(1, config.DELIVERY_MAX_ATTEMPTS + 1):
+        result = _attempt(payload)
+        if result is not None:
+            return result
+        if attempt < config.DELIVERY_MAX_ATTEMPTS:
+            delay = config.DELIVERY_BACKOFF_SECONDS * attempt
+            log.info("retrying delivery %s in %.1fs (attempt %d/%d)",
+                     payload.routine_run_id, delay, attempt + 1,
+                     config.DELIVERY_MAX_ATTEMPTS)
+            time.sleep(delay)
+
+    # Out of attempts. Not data loss: tomorrow's crawl re-reports this finding,
+    # and the ledger only records URLs the backend actually stored.
+    log.error("delivery failed after %d attempts (%s)",
+              config.DELIVERY_MAX_ATTEMPTS, payload.routine_run_id)
+    return Delivery(stored=False)
 
 
 def _envelope(crawl_id: str, seq: int, keyword: str, findings: list, no_findings: bool, note_suffix: str = "") -> IngestPayload:

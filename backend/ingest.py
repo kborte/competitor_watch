@@ -20,11 +20,12 @@ def process(payload: IngestPayload) -> dict:
     Returns per-payload counts for the crawler's log."""
     # ---- Phase 1: claim the delivery, decide novelty. Short transaction. ----
     with db.connect() as conn:
-        # Idempotent on routine_run_id: the same delivery can legitimately
-        # arrive twice — a re-run of the workflow, or a manual dispatch — and
-        # must not be counted twice. The crawler itself does not retry; a
-        # delivery lost in transit is recovered by the next daily crawl, which
-        # re-reports every finding it can still see.
+        # Idempotent on routine_run_id: the same delivery legitimately arrives
+        # twice when the crawler retries a timeout, when a workflow is re-run,
+        # or on a manual dispatch. This check runs — and the run row below is
+        # committed — before any classification, which is what makes a retry
+        # free: a repeat short-circuits here without reaching the model, even
+        # while the original request is still in flight.
         if db.run_exists(conn, payload.routine_run_id):
             return {"status": "already processed", "routine_run_id": payload.routine_run_id}
 

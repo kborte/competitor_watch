@@ -118,3 +118,10 @@ GEMINI_BACKOFF_SECONDS = float(os.environ.get("GEMINI_BACKOFF_SECONDS", "2"))
 # (45s) so the client stops waiting only when something is genuinely wrong,
 # never merely because classification was slow.
 BACKEND_TIMEOUT_SECONDS = int(os.environ.get("BACKEND_TIMEOUT_SECONDS", "90"))
+
+# Delivery retries. Free in model tokens: /ingest is idempotent on
+# routine_run_id and commits that row before classifying, so a repeat never
+# reaches the model. Exhausting them is not data loss either — the next daily
+# crawl re-reports the finding.
+DELIVERY_MAX_ATTEMPTS = int(os.environ.get("DELIVERY_MAX_ATTEMPTS", "3"))
+DELIVERY_BACKOFF_SECONDS = float(os.environ.get("DELIVERY_BACKOFF_SECONDS", "2"))

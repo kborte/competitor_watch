@@ -15,6 +15,11 @@ from research_crawler import crawler
 from research_crawler.schemas import IngestPayload
 
 
+@pytest.fixture(autouse=True)
+def fast_backoff(monkeypatch):
+    monkeypatch.setattr(crawler.config, "DELIVERY_BACKOFF_SECONDS", 0.001)
+
+
 @pytest.fixture
 def payload():
     now = datetime.now(UTC)
@@ -74,6 +79,88 @@ class TestDeliveryOutcomes:
         with patch.object(crawler.requests, "post",
                           side_effect=requests.ConnectionError("refused")):
             assert crawler.deliver(payload).stored is False
+
+
+class TestDeliveryRetries:
+    """Retrying is free in model tokens: /ingest is idempotent on
+    routine_run_id and commits that row before classifying, so a repeat
+    short-circuits to "already processed" without reaching the model."""
+
+    def test_a_timeout_is_retried_and_can_succeed(self, payload):
+        attempts = []
+
+        def flaky(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise requests.Timeout("too slow")
+            return response(200, {"status": "already processed"})
+
+        with patch.object(crawler.requests, "post", side_effect=flaky):
+            assert crawler.deliver(payload).stored is True
+        assert len(attempts) == 3
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_server_errors_are_retried(self, payload, status):
+        attempts = []
+
+        def flaky(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) < 2:
+                return response(status, None, "boom")
+            return response(200, {"errors": 0})
+
+        with patch.object(crawler.requests, "post", side_effect=flaky):
+            assert crawler.deliver(payload).stored is True
+        assert len(attempts) == 2
+
+    def test_retries_are_capped_then_give_up(self, payload):
+        attempts = []
+
+        def always(*args, **kwargs):
+            attempts.append(1)
+            raise requests.ConnectionError("refused")
+
+        with patch.object(crawler.requests, "post", side_effect=always):
+            assert crawler.deliver(payload).stored is False
+        # Giving up is not data loss: tomorrow's crawl re-reports the finding.
+        assert len(attempts) == crawler.config.DELIVERY_MAX_ATTEMPTS
+
+    @pytest.mark.parametrize("status", [400, 404, 422])
+    def test_client_errors_are_not_retried(self, payload, status):
+        # Our own malformed payload fails identically however often it is sent.
+        attempts = []
+
+        def always(*args, **kwargs):
+            attempts.append(1)
+            return response(status, None, "bad request")
+
+        with patch.object(crawler.requests, "post", side_effect=always):
+            assert crawler.deliver(payload).stored is False
+        assert len(attempts) == 1
+
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_credential_failures_are_not_retried(self, payload, status):
+        attempts = []
+
+        def always(*args, **kwargs):
+            attempts.append(1)
+            return response(status, None, "no")
+
+        with patch.object(crawler.requests, "post", side_effect=always):
+            with pytest.raises(crawler.FatalDeliveryError):
+                crawler.deliver(payload)
+        assert len(attempts) == 1
+
+    def test_success_makes_only_one_request(self, payload):
+        attempts = []
+
+        def once(*args, **kwargs):
+            attempts.append(1)
+            return response(200, {"errors": 0})
+
+        with patch.object(crawler.requests, "post", side_effect=once):
+            crawler.deliver(payload)
+        assert len(attempts) == 1
 
 
 class TestFailFastOnAuth:
