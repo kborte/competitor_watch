@@ -7,25 +7,17 @@ Only findings that survive dedup and are not QIC reference rows get here
 (ingest.py), so classifications are sparse relative to findings.
 """
 
-import logging
-import time
-
 from google import genai
 from google.genai import types
+
+from shared import gemini
 
 from . import config
 from .schemas import Classification
 
-log = logging.getLogger(__name__)
-
 client = genai.Client()  # reads GEMINI_API_KEY from the environment
 
 MODEL = config.GEMINI_MODEL
-
-# Statuses worth another attempt: rate limiting and transient unavailability.
-# Everything else — a bad key, a malformed request — fails the same way on every
-# retry, so retrying only delays the error and spends quota.
-_RETRYABLE_STATUSES = (429, 500, 502, 503, 504)
 
 # The category bucket definitions are condensed from the crawler's fuller
 # taxonomy (research_crawler/structure.py). Without them the model would still
@@ -60,31 +52,8 @@ Judge:
 """
 
 
-def _status_of(exc: Exception) -> int | None:
-    """HTTP status carried by a Gemini SDK error, or None if it isn't one."""
-    for attr in ("code", "status_code"):
-        value = getattr(exc, attr, None)
-        if isinstance(value, int):
-            return value
-    response = getattr(exc, "response", None)
-    value = getattr(response, "status_code", None)
-    return value if isinstance(value, int) else None
-
-
-def _usage_of(response) -> dict:
-    """Token counts for one response, empty when the SDK reports none."""
-    usage = getattr(response, "usage_metadata", None)
-    if usage is None:
-        return {}
-    return {
-        "input_tokens": getattr(usage, "prompt_token_count", None),
-        "output_tokens": getattr(usage, "candidates_token_count", None),
-        "total_tokens": getattr(usage, "total_token_count", None),
-    }
-
-
 def _generate(prompt: str):
-    """Calls the model, retrying only transient failures with linear backoff."""
+    """Calls the model with this service's limits and retry budget."""
     request_config = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=Classification,
@@ -97,24 +66,11 @@ def _generate(prompt: str):
         # stops waiting and long before the server drops the request.
         http_options=types.HttpOptions(timeout=config.CLASSIFY_TIMEOUT_MS),
     )
-    last: Exception | None = None
-    for attempt in range(1, config.GEMINI_MAX_ATTEMPTS + 1):
-        try:
-            return client.models.generate_content(
-                model=MODEL, contents=prompt, config=request_config,
-            )
-        except Exception as exc:
-            status = _status_of(exc)
-            if status not in _RETRYABLE_STATUSES or attempt == config.GEMINI_MAX_ATTEMPTS:
-                raise
-            last = exc
-            delay = config.GEMINI_BACKOFF_SECONDS * attempt
-            log.warning(
-                "classify attempt %d/%d failed with %s, retrying in %.1fs",
-                attempt, config.GEMINI_MAX_ATTEMPTS, status, delay,
-            )
-            time.sleep(delay)
-    raise last  # unreachable: the loop either returns or raises
+    return gemini.generate(
+        client, model=MODEL, contents=prompt, request_config=request_config,
+        max_attempts=config.GEMINI_MAX_ATTEMPTS,
+        backoff_seconds=config.GEMINI_BACKOFF_SECONDS, label="classify",
+    )
 
 
 def classify(finding) -> tuple[Classification, str, str, dict]:
@@ -135,4 +91,4 @@ def classify(finding) -> tuple[Classification, str, str, dict]:
         raise ValueError(
             f"model returned no parseable classification: {(response.text or '')[:200]!r}"
         )
-    return parsed, prompt, response.text, _usage_of(response)
+    return parsed, prompt, response.text, gemini.usage_of(response)

@@ -35,7 +35,7 @@ jobs:
           pip install -r research_crawler/requirements.txt
 
       - name: Lint
-        run: ruff check backend research_crawler tests
+        run: ruff check shared backend research_crawler tests
 
       - name: Tests
         run: pytest -q

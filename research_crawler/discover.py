@@ -14,7 +14,9 @@ from datetime import UTC, datetime, timedelta
 from google import genai
 from google.genai import types
 
-from . import config, llm
+from shared import gemini
+
+from . import config
 from .fetch import fetch_page
 
 log = logging.getLogger(__name__)
@@ -64,7 +66,7 @@ def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, lis
 
     window_note = f" (window: last {time_range_days}d)" if time_range_days else ""
     log.info("[%s] calling Gemini with search grounding...%s", keyword, window_note)
-    response = llm.generate(
+    response = gemini.generate(
         client,
         model=config.MODEL,
         contents=PROMPT_TEMPLATE.format(keyword=keyword),
@@ -76,6 +78,8 @@ def discover(keyword: str, time_range_days: int | None = None) -> tuple[str, lis
             ),
             http_options=types.HttpOptions(timeout=config.DISCOVER_TIMEOUT_MS),
         ),
+        max_attempts=config.GEMINI_MAX_ATTEMPTS,
+        backoff_seconds=config.GEMINI_BACKOFF_SECONDS,
         label=keyword,
     )
     summary_text = response.text or ""

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend import classify, config
-from research_crawler import llm
+from shared import gemini
 
 
 class SdkError(Exception):
@@ -142,22 +142,20 @@ class TestUsageAccounting:
 
 
 class TestStatusExtraction:
-    """Both packages carry their own copy of this helper by design; they must
-    still agree on what a status looks like."""
+    """One shared helper now, used by all three call sites."""
 
     def test_code_attribute_is_read(self):
-        assert classify._status_of(SdkError(503)) == 503
-        assert llm.status_of(SdkError(503)) == 503
+        assert gemini.status_of(SdkError(503)) == 503
 
     def test_nested_response_status_is_read(self):
         exc = Exception("wrapped")
         exc.response = MagicMock(status_code=429)
-        assert classify._status_of(exc) == 429
-        assert llm.status_of(exc) == 429
+        assert gemini.status_of(exc) == 429
 
     def test_a_plain_exception_has_no_status(self):
-        assert classify._status_of(ValueError("nope")) is None
-        assert llm.status_of(ValueError("nope")) is None
+        assert gemini.status_of(ValueError("nope")) is None
 
-    def test_both_packages_retry_the_same_statuses(self):
-        assert set(classify._RETRYABLE_STATUSES) == set(llm.RETRYABLE_STATUSES)
+    def test_retryable_statuses_are_transient_only(self):
+        # A permanent status here would mean retrying a request that can never
+        # succeed, spending quota to arrive at the same error.
+        assert set(gemini.RETRYABLE_STATUSES) == {429, 500, 502, 503, 504}

@@ -12,7 +12,9 @@ from datetime import UTC, date, datetime
 from google import genai
 from google.genai import types
 
-from . import config, llm
+from shared import gemini
+
+from . import config
 from .discover import ResolvedSource
 from .schemas import FindingsBatch
 
@@ -98,7 +100,7 @@ def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> Find
         summary = summary[:config.MAX_SUMMARY_CHARS]
 
     prompt = PROMPT_TEMPLATE.format(keyword=keyword, summary=summary, sources=_format_sources(sources))
-    response = llm.generate(
+    response = gemini.generate(
         client,
         model=config.MODEL,
         contents=prompt,
@@ -111,6 +113,8 @@ def structure(keyword: str, summary: str, sources: list[ResolvedSource]) -> Find
             ),
             http_options=types.HttpOptions(timeout=config.STRUCTURE_TIMEOUT_MS),
         ),
+        max_attempts=config.GEMINI_MAX_ATTEMPTS,
+        backoff_seconds=config.GEMINI_BACKOFF_SECONDS,
         label=keyword,
     )
     batch = response.parsed

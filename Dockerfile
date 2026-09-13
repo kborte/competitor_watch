@@ -7,6 +7,9 @@ WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
+# shared/ holds the wire contract and helpers both deployables import. The
+# backend cannot start without it.
+COPY shared/ shared/
 COPY backend/ backend/
 
 # $PORT is injected by the platform (8080 by default).

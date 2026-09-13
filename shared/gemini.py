@@ -1,15 +1,14 @@
-"""Shared Gemini call wrapper for the crawler's two model calls.
+"""Calling Gemini: retry policy and token accounting.
 
-Applies the retry policy and reads token usage in one place, so discover.py and
-structure.py differ only in the prompt and the response schema. Deliberately not
-imported from the backend, which has its own copy: the two are deployed
-separately and agree on behaviour, not on code.
+All three call sites — the crawler's search and structuring, the backend's
+classification — want the same behaviour around a model call and differ only in
+the prompt, the response schema, and how patient they are. Retry limits are
+parameters rather than configuration reads, so this module stays independent of
+either package's config.
 """
 
 import logging
 import time
-
-from . import config
 
 log = logging.getLogger(__name__)
 
@@ -42,23 +41,26 @@ def usage_of(response) -> dict:
     }
 
 
-def generate(client, *, model: str, contents: str, request_config, label: str):
+def generate(
+    client, *, model: str, contents: str, request_config,
+    max_attempts: int, backoff_seconds: float, label: str,
+):
     """Calls the model, retrying only transient failures with linear backoff."""
     last: Exception | None = None
-    for attempt in range(1, config.GEMINI_MAX_ATTEMPTS + 1):
+    for attempt in range(1, max_attempts + 1):
         try:
             return client.models.generate_content(
                 model=model, contents=contents, config=request_config,
             )
         except Exception as exc:
             status = status_of(exc)
-            if status not in RETRYABLE_STATUSES or attempt == config.GEMINI_MAX_ATTEMPTS:
+            if status not in RETRYABLE_STATUSES or attempt == max_attempts:
                 raise
             last = exc
-            delay = config.GEMINI_BACKOFF_SECONDS * attempt
+            delay = backoff_seconds * attempt
             log.warning(
                 "[%s] attempt %d/%d failed with %s, retrying in %.1fs",
-                label, attempt, config.GEMINI_MAX_ATTEMPTS, status, delay,
+                label, attempt, max_attempts, status, delay,
             )
             time.sleep(delay)
     raise last  # unreachable: the loop either returns or raises

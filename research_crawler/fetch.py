@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 import requests
 from bs4 import BeautifulSoup
 
+from shared.htmltext import extract_clean_text
+
 log = logging.getLogger(__name__)
 
 _ISO_DATE = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})")
@@ -28,7 +30,7 @@ _MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
 
 USER_AGENT = "QIC-CompetitorWatch/1.0 (internal competitive-intelligence monitor)"
-CONTENT_TAGS = ["h1", "h2", "h3", "h4", "p", "li", "td", "span"]
+# CONTENT_TAGS lives with the extractor, in shared/htmltext.py.
 MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 
 # Hard ceiling on what we will pull over the wire, independent of the snapshot
@@ -231,22 +233,6 @@ def extract_og_metadata(html: str) -> dict[str, str | None]:
         "og_description": meta("og:description", "twitter:description"),
         "og_site_name": meta("og:site_name"),
     }
-
-
-def extract_clean_text(html: str) -> str:
-    """Flattens HTML to one line of visible text per content element, dropping
-    scripts, styles and consecutive duplicates."""
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "iframe", "svg"]):
-        tag.decompose()
-
-    lines = []
-    for el in soup.find_all(CONTENT_TAGS):
-        text = re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip()
-        if text and len(text) > 1 and (not lines or lines[-1] != text):
-            lines.append(text)
-
-    return "\n".join(lines)
 
 
 def _is_public_address(host: str) -> bool:
