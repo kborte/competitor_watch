@@ -12,9 +12,13 @@ API — nothing in this app is shared with it beyond the API contract.
 
 ```bash
 npm install
-# NEXT_PUBLIC_API_BASE_URL comes from the repo-root .env (see ../.env.example)
-npm run dev
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
 ```
+
+Next.js reads env files only from `frontend/`, never the repo-root `.env`, so
+the variable is passed inline. Keep it out of `frontend/.env*` files: `next
+build` reads those too, and a leftover one would bake its URL into the image
+in place of `/api`.
 
 Requires the backend (`../backend`) running and reachable at
 `NEXT_PUBLIC_API_BASE_URL`. Locally that is an absolute URL

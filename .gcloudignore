@@ -9,8 +9,7 @@ docs
 __pycache__
 **/__pycache__
 *.pyc
-backend/.env
-research_crawler/.env
+**/.env*
 payload.json
 snapshots.json
 mockup_v4.html
